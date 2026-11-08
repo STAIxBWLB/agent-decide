@@ -20,6 +20,7 @@ test("AC7: shadow records hold no state, instructions or descriptions, and repor
     const text = readdirSync(dir).map(f => readFileSync(join(dir, f), "utf8")).join("");
     for (const leak of [secretState, "Pick the task class", "write code", "review a change"]) expect(text).not.toContain(leak);
     expect(text).toContain('"stateSha256"');
+    expect(text).toContain('"optionCount":3');
     const [r] = await shadowReport(dir);
     expect(r).toEqual({ questionId: "test.triage.v1", decisions: 3, abstained: { low_margin: 1 }, labelled: 2, agreed: 1, agreement: 0.5 });
   } finally { fake.stop(); }

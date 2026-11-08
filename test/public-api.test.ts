@@ -24,6 +24,9 @@ test("public entry points validate their inputs like the CLI, before any request
     ["selectProvider name", async () => api.selectProvider({ providers: {} }, "constructor")],
     ["parseProvider", async () => api.parseProvider("p", { kind: "logits" })],
     ["parseQuestion", async () => api.parseQuestion({})],
+    ["parseRows question", async () => api.parseRows("", { ...question, options: [] })],
+    ["selectProvider config", async () => api.selectProvider({ providers: { p: { ...good, model: "latest" } } }, "p")],
+    ["selectProvider http", async () => api.selectProvider({ providers: { p: { ...good, onPrem: false, endpoint: "http://203.0.113.5" } } }, "p")],
   ];
   try {
     for (const [name, run] of cases) {
@@ -32,4 +35,8 @@ test("public entry points validate their inputs like the CLI, before any request
     }
     expect(fake.seen).toHaveLength(0);
   } finally { fake.stop(); }
+});
+
+test("only entry points are public; internal helpers are not exported", () => {
+  for (const internal of ["topTwo", "ece", "macroF1", "readKey", "appendDecision", "readRecords", "askSystemOne", "askLogits"]) expect(internal in api).toBe(false);
 });

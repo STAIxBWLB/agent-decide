@@ -23,6 +23,7 @@ function parseRow(raw: unknown, ids: Set<string>, where: string): EvalRow {
 }
 
 export function parseRows(text: string, question: Question): EvalRow[] {
+  question = parseQuestion(question);
   const ids = new Set(question.options.map(o => o.id));
   const rows: EvalRow[] = [];
   text.split("\n").forEach((line, i) => {

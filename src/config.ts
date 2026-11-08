@@ -98,7 +98,7 @@ export function selectProvider(config: Config, name?: string): ProviderConfig {
   // hasOwn: names such as "constructor" must not resolve to Object.prototype members.
   const provider = chosen !== undefined && Object.hasOwn(config.providers, chosen) ? config.providers[chosen] : undefined;
   if (!provider) throw new UsageError(`provider: ${chosen === undefined ? "none selected" : `unknown provider ${JSON.stringify(chosen)}`}; pass --provider NAME or set "default" in config.json (see adec providers)`);
-  return provider;
+  return checkProvider(provider);
 }
 
 /** The single place a provider key is read. The key is never logged or echoed. */

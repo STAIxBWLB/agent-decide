@@ -5,7 +5,7 @@ import { readTextBounded } from "./io.ts";
 
 /** Content-free decision log: ids, counts and closed words only. Never state, instructions or option descriptions. */
 export interface DecisionRecord {
-  v: 1; kind: "decision"; id: string; at: string; questionId: string; options: string[];
+  v: 1; kind: "decision"; id: string; at: string; questionId: string; optionCount: number; options: string[];
   choice: string | null; margin: number; abstain: boolean; reason: string;
   provider: string; model: string; latencyMs: number; labelMass?: number; stateSha256: string;
 }
@@ -33,7 +33,7 @@ async function append(dir: string, at: Date, row: object) {
 
 export async function appendDecision(dir: string, question: Question, decision: Decision, stateSha256: string, at = new Date()) {
   const row: DecisionRecord = {
-    v: 1, kind: "decision", id: decision.id, at: at.toISOString(), questionId: decision.questionId, options: question.options.map(o => o.id),
+    v: 1, kind: "decision", id: decision.id, at: at.toISOString(), questionId: decision.questionId, optionCount: question.options.length, options: question.options.map(o => o.id),
     choice: decision.choice, margin: decision.margin, abstain: decision.abstain, reason: decision.reason,
     provider: decision.decider.provider, model: decision.decider.model, latencyMs: decision.decider.latencyMs,
     ...(decision.labelMass === undefined ? {} : { labelMass: decision.labelMass }), stateSha256,

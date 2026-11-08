@@ -27,6 +27,8 @@ export interface Decision {
   abstain: boolean;
   reason: Reason;
   labelMass?: number;
+  /** Present when a calibration fit applied (probabilities and margin are tempered). */
+  calibration?: { questionId: string; method: "temperature"; fittedAt: string };
   decider: Decider;
 }
 

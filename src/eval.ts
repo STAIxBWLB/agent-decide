@@ -11,7 +11,7 @@ export interface EvalReport {
 }
 
 /** One row check for the CLI file reader and the library entry point alike. */
-function parseRow(raw: unknown, ids: Set<string>, where: string): EvalRow {
+export function parseRow(raw: unknown, ids: Set<string>, where: string): EvalRow {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`${where}: expected an object`);
   const r = raw as Record<string, unknown>;
   const unknown = Object.keys(r).filter(k => !["id", "state", "label", "pii"].includes(k));
@@ -51,6 +51,11 @@ export function ece(points: { confidence: number; correct: boolean }[], bins = 1
   let total = 0;
   for (let b = 0; b < bins; b++) if (n[b]) total += (n[b] / points.length) * Math.abs(acc[b] / n[b] - conf[b] / n[b]);
   return total;
+}
+
+/** Multi-class Brier score of one answer. */
+export function brierScore(question: Question, probabilities: Record<string, number>, label: string): number {
+  return question.options.reduce((s, o) => s + ((probabilities[o.id] ?? 0) - (o.id === label ? 1 : 0)) ** 2, 0);
 }
 
 export function macroF1(pairs: { predicted: string; label: string }[]): number | null {
@@ -94,7 +99,7 @@ export async function evaluate(question: Question, rows: EvalRow[], provider: Pr
       // Same tie rule as the decision itself (question order), whatever the key order of the object.
       const top = topTwo(question, d.probabilities).choice;
       calibration.push({ confidence: d.probabilities[top] ?? 0, correct: top === row.label });
-      brierSum += question.options.reduce((s, o) => s + ((d.probabilities[o.id] ?? 0) - (o.id === row.label ? 1 : 0)) ** 2, 0);
+      brierSum += brierScore(question, d.probabilities, row.label);
     }
   }
   const evaluated = used.length - skipped;

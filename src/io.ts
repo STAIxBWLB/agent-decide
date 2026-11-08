@@ -43,8 +43,8 @@ export async function readStdinBounded(max: number, what: string): Promise<strin
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** Read an HTTP body up to `max` bytes; returns undefined when it is larger. */
-export async function readBodyBounded(res: Response, max: number): Promise<string | undefined> {
+/** Read an HTTP request or response body up to `max` bytes; returns undefined when it is larger. */
+export async function readBodyBounded(res: { body: ReadableStream<Uint8Array> | null }, max: number): Promise<string | undefined> {
   if (!res.body) return "";
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];

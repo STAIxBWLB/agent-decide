@@ -111,7 +111,7 @@ export async function route(request: RouteRequest, policy: Policy, provider: Pro
       v: 1, kind: "route", id, at: new Date().toISOString(), policyId: policy.policyId,
       ...(req.turnId === undefined ? {} : { turnIdSha256: sha(req.turnId) }), alias: d.alias, effort: d.effort, reason, rules,
       fallbackApplied, pinned, margin: d.margin, contextTokens: c.contextTokens, pii: !!(c.pii || c.private),
-      ...(d.decider ? { provider: d.decider.provider, model: d.decider.model, latencyMs: d.decider.latencyMs } : {}), evidenceSha256: sha(req.evidence),
+      ...(d.decider ? { provider: d.decider.provider, model: d.decider.model, ...(d.decider.version === undefined ? {} : { version: d.decider.version }), latencyMs: d.decider.latencyMs } : {}), evidenceSha256: sha(req.evidence),
     });
     return d;
   };

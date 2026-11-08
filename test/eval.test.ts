@@ -76,3 +76,58 @@ test("review r3: the library evaluate() validates rows, question and limit befor
     expect(fake.seen).toHaveLength(0);
   } finally { fake.stop(); }
 });
+
+test("AC2: slices reuse the pooled metric definitions, including abstention and skipped rows", async () => {
+  const fake = fakeServer(body => systemOneAnswer(answers[body.state]!));
+  try {
+    const rows = parseRows(set, question).map((row, i) => ({ ...row, tags: i < 2 ? ["ko", "project-a"] : ["project-b"] }));
+    const r = await evaluate(question, rows, provider(fake.url, { onPrem: false, version: "v1" }), { key: async () => undefined, minMargin: 0.05, perRow: true });
+    expect(r.version).toBe("v1");
+    expect(r.slices.ko).toMatchObject({ n: 2, answered: 2, accuracy: 0.5, coverage: 1 });
+    expect(r.slices.ko!.macroF1).toBeCloseTo(1 / 3);
+    expect(r.slices.ko!.ece).toBeCloseTo(0.35);
+    expect(r.slices.ko!.brier).toBeCloseTo((0.015 + 0.86) / 2);
+    expect(r.slices["project-a"]).toEqual(r.slices.ko!);
+    expect(r.slices["project-b"]).toMatchObject({ n: 3, answered: 1, accuracy: 1, coverage: 0.5, macroF1: 1 });
+    expect(r.slices["project-b"]!.ece).toBeCloseTo((0.2 + 0.45) / 2);
+    expect(r.slices["project-b"]!.brier).toBeCloseTo((0.06 + 0.515) / 2);
+    expect(r.rows!.map(row => row.n)).toEqual([0, 1, 2, 3, 4]);
+    expect(r.rows![4]).toMatchObject({ skipped: true });
+  } finally { fake.stop(); }
+});
+
+test("AC2: row ids and tags are closed, bounded, unique and preserved", () => {
+  const row = { id: "Row:1-A", state: "s", label: "plan", tags: ["ko", "project-a"] };
+  expect(parseRows(JSON.stringify(row), question)).toEqual([row]);
+  for (const tags of [["Ko"], ["has space"], ["x".repeat(33)], ["ko", "ko"], Array.from({ length: 9 }, (_, n) => `t${n}`), "ko", [1]]) {
+    expect(() => parseRows(JSON.stringify({ ...row, tags }), question)).toThrow(UsageError);
+  }
+  for (const id of ["", "has space", "x".repeat(129), 1]) expect(() => parseRows(JSON.stringify({ ...row, id }), question)).toThrow(UsageError);
+});
+
+test("AC3: wording flip validates before calls and counts known answers, abstentions and privacy skips", async () => {
+  const flipQuestion = { ...question, questionId: "test.flip.v1", instructions: "Different wording.", options: [...question.options].reverse() };
+  let calls = 0;
+  const fake = fakeServer(() => systemOneAnswer([
+    { implement: 1, review: 0, plan: 0 }, { implement: 1, review: 0, plan: 0 },
+    { implement: 1, review: 0, plan: 0 }, { implement: 0, review: 1, plan: 0 },
+    { implement: 0.5, review: 0.5, plan: 0 }, { implement: 0.5, review: 0.5, plan: 0 },
+  ][calls++]!));
+  try {
+    const p = provider(fake.url, { onPrem: false }), opts = { key: async () => undefined };
+    for (const flipQuestion of [question, { ...question, questionId: "flip", options: [{ id: "implement" }, { id: "other" }, { id: "plan" }] }]) {
+      await expect(evaluate(question, [{ state: "s", label: "plan" }], p, { ...opts, flipQuestion })).rejects.toThrow(UsageError);
+    }
+    expect(fake.seen).toHaveLength(0);
+    const r = await evaluate(question, [
+      { state: "1", label: "implement" }, { state: "private", label: "plan", pii: true },
+      { state: "2", label: "review" }, { state: "3", label: "plan" },
+    ], p, { ...opts, flipQuestion, minMargin: 0.1, perRow: true });
+    expect(fake.seen).toHaveLength(6);
+    expect(r.flip).toEqual({ n: 3, bothAnswered: 2, agreed: 1, agreement: 1 / 3 });
+    expect(r.rows![0]).toMatchObject({ flipChoice: "implement" });
+    expect(r.rows![1]).not.toHaveProperty("flipChoice");
+    expect(r.rows![3]).toMatchObject({ flipChoice: null });
+    expect(fake.seen[1]!.body.state).toBe("1");
+  } finally { fake.stop(); }
+});

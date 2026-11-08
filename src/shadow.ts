@@ -7,14 +7,14 @@ import { appendLine, readTextBounded } from "./io.ts";
 export interface DecisionRecord {
   v: 1; kind: "decision"; id: string; at: string; questionId: string; optionCount: number; options: string[];
   choice: string | null; margin: number; abstain: boolean; reason: string;
-  provider: string; model: string; latencyMs: number; labelMass?: number; calibratedAt?: string; stateSha256: string;
+  provider: string; model: string; version?: string; latencyMs: number; labelMass?: number; calibratedAt?: string; stateSha256: string;
 }
 export interface OutcomeRecord { v: 1; kind: "outcome"; id: string; at: string; label: string }
 /** Content-free route record: policy, pick, rules and numbers; hashes of the turn id and evidence, never their text. */
 export interface RouteRecord {
   v: 1; kind: "route"; id: string; at: string; policyId: string; turnIdSha256?: string; alias: string | null; effort: string | null;
   reason: string; rules: string[]; fallbackApplied: boolean; pinned: boolean; margin: number; contextTokens: number; pii: boolean;
-  provider?: string; model?: string; latencyMs?: number; evidenceSha256: string;
+  provider?: string; model?: string; version?: string; latencyMs?: number; evidenceSha256: string;
 }
 /** What happened to a routed turn. */
 export const ROUTE_OUTCOME_WORDS = ["completed", "failed", "retried", "unknown"] as const;
@@ -34,6 +34,7 @@ export async function appendDecision(dir: string, question: Question, decision: 
     v: 1, kind: "decision", id: decision.id, at: at.toISOString(), questionId: decision.questionId, optionCount: question.options.length, options: question.options.map(o => o.id),
     choice: decision.choice, margin: decision.margin, abstain: decision.abstain, reason: decision.reason,
     provider: decision.decider.provider, model: decision.decider.model, latencyMs: decision.decider.latencyMs,
+    ...(decision.decider.version === undefined ? {} : { version: decision.decider.version }),
     ...(decision.labelMass === undefined ? {} : { labelMass: decision.labelMass }),
     ...(decision.calibration ? { calibratedAt: decision.calibration.fittedAt } : {}), stateSha256,
   };

@@ -27,8 +27,15 @@ export async function postJson(provider: ProviderConfig, path: string, body: unk
     await res.body?.cancel().catch(() => {});
     throw new ProviderError("http", provider.name, `HTTP ${res.status}; check the endpoint, model name and key file`);
   }
-  const text = await readBodyBounded(res, RESPONSE_BYTES).catch(() => undefined);
-  if (text === undefined) throw new ProviderError("malformed", provider.name, `response body missing or larger than ${RESPONSE_BYTES} bytes`);
+  let text: string | undefined;
+  try { text = await readBodyBounded(res, RESPONSE_BYTES); }
+  catch (error) {
+    // The same signal also bounds the body: a stalled body after the headers is a timeout, not a malformed answer.
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
+      throw new ProviderError("timeout", provider.name, `no complete answer within ${provider.timeoutMs} ms; raise timeoutMs or check the server`);
+    throw new ProviderError("http", provider.name, "the response body failed while reading; check the server");
+  }
+  if (text === undefined) throw new ProviderError("malformed", provider.name, `response body larger than ${RESPONSE_BYTES} bytes`);
   try { return JSON.parse(text); } catch { throw new ProviderError("malformed", provider.name, "response is not JSON"); }
 }
 

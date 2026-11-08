@@ -77,7 +77,7 @@ export function parseConfig(raw: unknown): Config {
   if (typeof c.providers !== "object" || c.providers === null || Array.isArray(c.providers)) fail("providers", "expected an object of named providers");
   const providers: Record<string, ProviderConfig> = {};
   for (const [name, value] of Object.entries(c.providers)) providers[name] = parseProvider(name, value);
-  if (c.default !== undefined && (typeof c.default !== "string" || !providers[c.default])) fail("default", "name one of the configured providers");
+  if (c.default !== undefined && (typeof c.default !== "string" || !Object.hasOwn(providers, c.default))) fail("default", "name one of the configured providers");
   return c.default === undefined ? { providers } : { providers, default: c.default as string };
 }
 
@@ -87,7 +87,8 @@ export async function loadConfig(home = adecHome()): Promise<Config> {
 
 export function selectProvider(config: Config, name?: string): ProviderConfig {
   const chosen = name ?? config.default ?? (Object.keys(config.providers).length === 1 ? Object.keys(config.providers)[0] : undefined);
-  const provider = chosen === undefined ? undefined : config.providers[chosen];
+  // hasOwn: names such as "constructor" must not resolve to Object.prototype members.
+  const provider = chosen !== undefined && Object.hasOwn(config.providers, chosen) ? config.providers[chosen] : undefined;
   if (!provider) throw new UsageError(`provider: ${chosen === undefined ? "none selected" : `unknown provider ${JSON.stringify(chosen)}`}; pass --provider NAME or set "default" in config.json (see adec providers)`);
   return provider;
 }

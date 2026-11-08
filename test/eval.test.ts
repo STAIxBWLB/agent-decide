@@ -52,3 +52,13 @@ test("ECE and macro-F1 edge cases", () => {
   expect(macroF1([])).toBeNull();
   expect(macroF1([{ predicted: "a", label: "b" }])).toBe(0);
 });
+
+test("review F5: calibration uses the decision's tie rule with numeric option ids", async () => {
+  const q = { questionId: "num.v1", instructions: "x", options: [{ id: "2" }, { id: "1" }] };
+  const fake = fakeServer(() => Response.json({ answers: { decision: { type: "choice", choice: "2", probabilities: { "2": 0.5, "1": 0.5 } } } }));
+  try {
+    const r = await evaluate(q, parseRows('{"state":"s","label":"2"}', q), provider(fake.url), { key: async () => undefined });
+    expect(r.accuracy).toBe(1);
+    expect(r.ece).toBeCloseTo(0.5); // confidence 0.5, correct
+  } finally { fake.stop(); }
+});

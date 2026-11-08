@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseConfig, parseProvider } from "../src/config.ts";
+import { parseConfig, parseProvider, selectProvider } from "../src/config.ts";
 import { UsageError } from "../src/contract.ts";
 
 const ok = { kind: "systemone", endpoint: "https://decider.example/", model: "kev-4b-2026-10", onPrem: false };
@@ -25,4 +25,10 @@ test("credentials in URLs, relative key files, unknown fields and bad defaults a
   expect(() => parseProvider("p", { ...ok, onPrem: "yes" })).toThrow(UsageError);
   expect(() => parseConfig({ providers: { a: ok }, default: "b" })).toThrow(UsageError);
   expect(parseConfig({ providers: { a: ok }, default: "a" }).default).toBe("a");
+});
+
+test("review F6: prototype names never resolve to a provider", () => {
+  const c = parseConfig({ providers: { a: ok } });
+  for (const name of ["constructor", "toString", "hasOwnProperty"]) expect(() => selectProvider(c, name)).toThrow(UsageError);
+  expect(() => parseConfig({ providers: { a: ok }, default: "constructor" })).toThrow(UsageError);
 });

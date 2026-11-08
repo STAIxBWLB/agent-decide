@@ -14,7 +14,8 @@ export interface Question { questionId: string; instructions: string; options: O
 export interface AskRequest { question: Question; state: string; pii?: boolean; minMargin?: number }
 
 /** What a provider adapter returns: probabilities over exactly the option ids. */
-export interface ProviderAnswer { probabilities: Record<string, number>; model: string; labelMass?: number }
+/** The configured model name is reported, never a server-supplied string (it could reflect the key or the state). */
+export interface ProviderAnswer { probabilities: Record<string, number>; labelMass?: number }
 
 export interface Decider { provider: string; kind: string; model: string; latencyMs: number }
 export interface Decision {

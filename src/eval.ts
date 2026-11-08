@@ -1,5 +1,5 @@
 import type { ProviderConfig } from "./config.ts";
-import { UsageError, type Question } from "./contract.ts";
+import { topTwo, UsageError, type Question } from "./contract.ts";
 import { decide, type DecideOptions } from "./decide.ts";
 
 export interface EvalRow { state: string; label: string; pii?: boolean }
@@ -73,10 +73,9 @@ export async function evaluate(question: Question, rows: EvalRow[], provider: Pr
     if (d.reason !== "state_too_long" && d.reason !== "off_prem") latencies.push(d.decider.latencyMs);
     if (d.abstain) abstained[d.reason] = (abstained[d.reason] ?? 0) + 1;
     else pairs.push({ predicted: d.choice!, label: row.label });
-    const ids = Object.keys(d.probabilities);
-    if (ids.length) {
-      let top = ids[0]!;
-      for (const id of question.options.map(o => o.id)) if ((d.probabilities[id] ?? 0) > (d.probabilities[top] ?? 0)) top = id;
+    if (Object.keys(d.probabilities).length) {
+      // Same tie rule as the decision itself (question order), whatever the key order of the object.
+      const top = topTwo(question, d.probabilities).choice;
       calibration.push({ confidence: d.probabilities[top] ?? 0, correct: top === row.label });
       brierSum += question.options.reduce((s, o) => s + ((d.probabilities[o.id] ?? 0) - (o.id === row.label ? 1 : 0)) ** 2, 0);
     }

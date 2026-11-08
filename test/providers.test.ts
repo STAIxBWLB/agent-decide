@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { UsageError } from "../src/contract.ts";
 import { decide } from "../src/decide.ts";
 import { EVIDENCE_SENTENCE } from "../src/providers/systemone.ts";
 import { fakeServer, logitsAnswer, provider, question, systemOneAnswer } from "./fakes.ts";
@@ -104,4 +105,51 @@ test("redirects are refused so a key never follows them", async () => {
     const d = await decide({ question, state: "s" }, provider(fake.url), { shadowDir: null, key: async () => "k" });
     expect(d).toMatchObject({ abstain: true, reason: "http" });
   } finally { fake.stop(); }
+});
+
+test("review F1: a server-supplied model string is never reported (it could reflect the key or state)", async () => {
+  const fake = fakeServer((body, path) => path === "/v1/systemone"
+    ? Response.json({ model: `echo ${body.state} KEY-XYZ`, answers: { decision: { type: "choice", choice: "implement", probabilities: { implement: 1, review: 0, plan: 0 } } } })
+    : Response.json({ model: `echo ${body.messages[1].content}`, choices: [{ logprobs: { content: [{ token: "A", logprob: 0, top_logprobs: [{ token: "A", logprob: 0 }] }] } }] }));
+  try {
+    for (const kind of ["systemone", "logits"] as const) {
+      const d = await decide({ question, state: "SECRET-STATE" }, provider(fake.url, { kind }), { shadowDir: null, key: async () => "KEY-XYZ" });
+      expect(d.decider.model).toBe("fake-1.0");
+      expect(JSON.stringify(d)).not.toContain("SECRET-STATE");
+      expect(JSON.stringify(d)).not.toContain("KEY-XYZ");
+    }
+  } finally { fake.stop(); }
+});
+
+test("review F2: positive logprobs are ignored and a non-distribution never becomes a decision", async () => {
+  const fake = fakeServer(() => logitsAnswer([{ token: "A", logprob: 1000 }, { token: "B", logprob: Math.log(0.5) }]));
+  try {
+    const d = await decide({ question, state: "s" }, provider(fake.url, { kind: "logits" }), noKey);
+    expect(d.choice).toBe("review");
+    expect(Object.values(d.probabilities).every(Number.isFinite)).toBe(true);
+  } finally { fake.stop(); }
+  const bad = fakeServer(() => logitsAnswer([{ token: "A", logprob: 1000 }]));
+  try {
+    expect(await decide({ question, state: "s" }, provider(bad.url, { kind: "logits" }), noKey)).toMatchObject({ abstain: true, reason: "malformed", choice: null });
+  } finally { bad.stop(); }
+});
+
+test("review F3: a body that stalls after the headers is a timeout, not malformed", async () => {
+  const fake = fakeServer(() => new Response(new ReadableStream({
+    async start(controller) { controller.enqueue(new TextEncoder().encode('{"answers":')); await Bun.sleep(500); controller.close(); },
+  }), { headers: { "content-type": "application/json" } }));
+  try {
+    expect(await decide({ question, state: "s" }, provider(fake.url, { timeoutMs: 150 }), noKey)).toMatchObject({ abstain: true, reason: "timeout", choice: null });
+  } finally { fake.stop(); }
+});
+
+test("review F4: the library entry point validates the question and request like the CLI", async () => {
+  const p = provider("http://127.0.0.1:9");
+  const one = { ...question, options: [{ id: "implement" }] };
+  const dup = { ...question, options: [{ id: "a" }, { id: "a" }] };
+  await expect(decide({ question: one, state: "s" }, p, noKey)).rejects.toThrow(UsageError);
+  await expect(decide({ question: dup, state: "s" }, p, noKey)).rejects.toThrow(UsageError);
+  await expect(decide({ question, state: 5 as never }, p, noKey)).rejects.toThrow(UsageError);
+  await expect(decide({ question, state: "s", pii: "yes" as never }, p, noKey)).rejects.toThrow(UsageError);
+  await expect(decide({ question, state: "s", extra: 1 } as never, p, noKey)).rejects.toThrow(UsageError);
 });

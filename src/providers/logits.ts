@@ -39,7 +39,7 @@ export async function askLogits(provider: ProviderConfig, key: string | undefine
   let total = 0;
   for (const entry of top) {
     const e = object(entry);
-    if (typeof e?.token !== "string" || typeof e.logprob !== "number" || !Number.isFinite(e.logprob)) continue;
+    if (typeof e?.token !== "string" || typeof e.logprob !== "number" || !Number.isFinite(e.logprob) || e.logprob > 0) continue;
     const id = labels.get(e.token.trim());
     if (!id) continue;
     const p = Math.exp(e.logprob);
@@ -49,6 +49,5 @@ export async function askLogits(provider: ProviderConfig, key: string | undefine
   if (total <= 0) throw new ProviderError("malformed", provider.name, "no option label among the top tokens");
   const probabilities: Record<string, number> = {};
   for (const id of Object.keys(mass)) probabilities[id] = mass[id]! / total;
-  const model = object(raw)?.model;
-  return { probabilities, model: typeof model === "string" && model ? model : provider.model, labelMass: Math.min(1, total) };
+  return { probabilities, labelMass: Math.min(1, total) };
 }

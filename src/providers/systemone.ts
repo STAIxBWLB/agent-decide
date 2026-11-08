@@ -35,6 +35,5 @@ export async function askSystemOne(provider: ProviderConfig, key: string | undef
   }
   if (Math.abs(sum - 1) > 0.001) throw bad("probabilities do not sum to 1");
   if (typeof answer.choice !== "string" || !ids.includes(answer.choice)) throw bad("choice is outside the options", "outside_options");
-  const model = object(raw)?.model;
-  return { probabilities, model: typeof model === "string" && model ? model : provider.model };
+  return { probabilities };
 }

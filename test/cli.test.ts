@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as fs from "node:fs/promises";
 import { EXIT, main } from "../src/cli.ts";
 import { COMMANDS } from "../src/commands-table.ts";
 import { fakeServer, question, systemOneAnswer, tempDir } from "./fakes.ts";
@@ -131,5 +132,62 @@ test("review P2: invalid eval input leaves no rows-out file and a corrected retr
       expect(JSON.parse(readFileSync(output, "utf8"))).toMatchObject({ n: 0, skipped: false, choice: "implement" });
       expect(fake.seen).toHaveLength(calls + 1);
     }
+  } finally { fake.stop(); }
+});
+
+test("review P2: failed evaluation leaves no rows-out file and the identical command succeeds after key repair", async () => {
+  const fake = fakeServer(() => systemOneAnswer({ implement: 1, review: 0, plan: 0 }));
+  try {
+    const s = setup(fake.url), set = join(s.home, "set.jsonl"), output = join(s.home, "rows.jsonl"), keyFile = join(s.home, "key.txt");
+    writeFileSync(set, JSON.stringify({ state: "s", label: "implement" }));
+    writeFileSync(keyFile, "invalid key with whitespace");
+    const args = ["eval", "--question", s.q, "--set", set, "--rows-out", output, "--json"];
+    expect(await main(args, s.io)).toBe(EXIT.usage);
+    expect(existsSync(output)).toBe(false);
+    expect(fake.seen).toHaveLength(0);
+    writeFileSync(keyFile, KEY);
+    expect(await main(args, s.io)).toBe(EXIT.ok);
+    expect(JSON.parse(readFileSync(output, "utf8"))).toMatchObject({ n: 0, skipped: false, choice: "implement" });
+    expect(fake.seen).toHaveLength(1);
+  } finally { fake.stop(); }
+});
+
+
+test("rows-out removes its own partial file when writing fails", async () => {
+  const fake = fakeServer(() => systemOneAnswer({ implement: 1, review: 0, plan: 0 }));
+  const s = setup(fake.url), set = join(s.home, "set.jsonl"), output = join(s.home, "rows.jsonl");
+  writeFileSync(set, JSON.stringify({ state: "s", label: "implement" }));
+  const originalOpen = fs.open;
+  const opened = spyOn(fs, "open").mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+    const handle = await originalOpen(...args);
+    if (args[0] === output && args[1] === "wx") {
+      const write = handle.writeFile.bind(handle);
+      handle.writeFile = async () => { await write("partial"); throw new Error("synthetic disk failure"); };
+    }
+    return handle;
+  });
+  try {
+    const args = ["eval", "--question", s.q, "--set", set, "--rows-out", output];
+    expect(await main(args, s.io)).toBe(EXIT.usage);
+    expect(existsSync(output)).toBe(false);
+    expect(fake.seen).toHaveLength(1);
+    opened.mockRestore();
+    expect(await main(args, s.io)).toBe(EXIT.ok);
+    expect(JSON.parse(readFileSync(output, "utf8"))).toHaveProperty("choice", "implement");
+  } finally { opened.mockRestore(); fake.stop(); }
+});
+
+test("rows-out exclusive creation preserves a destination created during evaluation", async () => {
+  const s = setup("http://127.0.0.1:9"), set = join(s.home, "set.jsonl"), output = join(s.home, "rows.jsonl");
+  const fake = fakeServer(() => {
+    writeFileSync(output, "concurrent owner's file");
+    return systemOneAnswer({ implement: 1, review: 0, plan: 0 });
+  });
+  writeFileSync(join(s.home, "config.json"), JSON.stringify({ providers: { fake: { kind: "systemone", endpoint: fake.url, model: "fake-1.0", onPrem: true } } }));
+  writeFileSync(set, JSON.stringify({ state: "s", label: "implement" }));
+  try {
+    expect(await main(["eval", "--question", s.q, "--set", set, "--rows-out", output], s.io)).toBe(EXIT.usage);
+    expect(readFileSync(output, "utf8")).toBe("concurrent owner's file");
+    expect(fake.seen).toHaveLength(1);
   } finally { fake.stop(); }
 });

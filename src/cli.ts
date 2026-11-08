@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import { lstat, open, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { appendFit, calibrate, loadFits, modelsReport, parseTargetAccuracy } from "./calibrate.ts";
 import { COMMANDS, type CommandSpec } from "./commands-table.ts";
@@ -95,19 +95,31 @@ async function run(p: Parsed, io: Io): Promise<number> {
       const flipFile = p.values["--flip-question"], rowsOut = p.values["--rows-out"];
       const flipQuestion = flipFile === undefined ? undefined : parseQuestion(await readJsonBounded(flipFile, QUESTION_BYTES, "flip question file"));
       const options = parseEvalOptions({ minMargin: parseMinMargin(p.values["--min-margin"]), ...(limit === undefined ? {} : { limit }), perRow: rowsOut !== undefined, ...(flipQuestion ? { flipQuestion } : {}) }, question);
-      let handle;
       if (rowsOut !== undefined) {
+        let exists = false;
+        try { await lstat(rowsOut); exists = true; }
+        catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new UsageError("eval: cannot inspect rows-out path; check directory permissions and retry");
+        }
+        if (exists) throw new UsageError("eval: rows-out path already exists; give a new file path");
+      }
+      // Evaluation can fail after input validation (for example, while reading a key).
+      // Do not create any output until it returns; wx still protects against a concurrent creator.
+      const r = await evaluate(question, rows, provider, options);
+      if (rowsOut !== undefined) {
+        let handle;
         try { handle = await open(rowsOut, "wx", 0o600); }
         catch { throw new UsageError("eval: cannot create rows-out file; give a new writable file path (existing files are refused)"); }
-      }
-      let r;
-      try {
-        r = await evaluate(question, rows, provider, options);
-        if (handle) {
-          try { await handle.writeFile(r.rows!.map(row => JSON.stringify(row) + "\n").join("")); }
-          catch { throw new UsageError("eval: cannot write rows-out file"); }
+        try {
+          await handle.writeFile(r.rows!.map(row => JSON.stringify(row) + "\n").join(""));
+          await handle.close();
+        } catch {
+          await handle.close().catch(() => {});
+          try { await unlink(rowsOut); }
+          catch { throw new UsageError("eval: cannot remove incomplete rows-out file; remove the incomplete destination before retrying"); }
+          throw new UsageError("eval: cannot write rows-out file; check free space and permissions, then retry");
         }
-      } finally { await handle?.close(); }
+      }
       // Per-row results belong to the requested file, not pooled command output.
       delete r.rows;
       print(r, [

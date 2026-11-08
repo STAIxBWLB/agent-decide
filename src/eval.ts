@@ -72,7 +72,7 @@ export function macroF1(pairs: { predicted: string; label: string }[]): number |
 }
 
 /** Replay a labelled set sequentially; writes no shadow records. ponytail: sequential and no retries, add concurrency when sets grow past a few thousand rows. */
-export async function evaluate(question: Question, rows: EvalRow[], provider: ProviderConfig, options: Omit<DecideOptions, "shadowDir"> & { limit?: number; minMargin?: number } = {}): Promise<EvalReport> {
+export async function evaluate(question: Question, rows: EvalRow[], provider: ProviderConfig, options: Pick<DecideOptions, "key"> & { limit?: number; minMargin?: number } = {}): Promise<EvalReport> {
   // Validate everything before the first provider call, with the CLI's rules.
   question = parseQuestion(question);
   const ids = new Set(question.options.map(o => o.id));

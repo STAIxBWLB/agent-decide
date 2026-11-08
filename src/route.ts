@@ -150,6 +150,9 @@ export async function route(request: RouteRequest, policy: Policy, provider: Pro
   // 6. One pair: no question.
   if (pairs.length === 1) return finish(pairs[0]!, "single");
   // 7. Ask the decider; 8. any abstention applies the fallback.
+  const fallback = pairs.find(same(policy.default)) ?? pairs[0]!;
+  // An off-prem decider on a PII or private turn: no question and no request are built.
+  if (sensitive && !provider.onPrem) return finish(fallback, "off_prem", { fallbackApplied: true });
   const question: Question = {
     questionId: `adec.route.${policy.policyId}.v1`, instructions: policy.instructions,
     options: pairs.map((p, i) => {
@@ -158,9 +161,8 @@ export async function route(request: RouteRequest, policy: Policy, provider: Pro
     }),
   };
   const d = await decide({ question, state: req.evidence, pii: sensitive, minMargin: policy.minMargin }, provider, { shadowDir: null, ...(options.key ? { key: options.key } : {}) });
-  // No request was built for these two; report no decider.
-  const decider = d.reason === "off_prem" || d.reason === "state_too_long" ? null : d.decider;
+  // No request was built for an over-long state; report no decider.
+  const decider = d.reason === "state_too_long" ? null : d.decider;
   if (d.choice !== null) return finish(pairs[Number(d.choice.slice(1)) - 1]!, "ok", { margin: d.margin, decider });
-  const fallback = pairs.find(same(policy.default)) ?? pairs[0]!;
   return finish(fallback, d.reason, { margin: d.margin, fallbackApplied: true, decider, ...(d.error === undefined ? {} : { error: d.error }) });
 }

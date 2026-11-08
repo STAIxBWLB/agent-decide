@@ -63,6 +63,7 @@ test("AC7: loopback only; Origin, foreign Host, non-JSON, oversized bodies and w
     expect(await status(post(`${s.url}/v1/systemone`, systemOneBody("x"), { origin: "https://evil.example" }))).toBe(403);
     expect(await status(post(`${s.url}/v1/systemone`, systemOneBody("x"), { host: "evil.example" }))).toBe(403);
     expect(await status(post(`${s.url}/v1/systemone`, systemOneBody("x"), { "content-type": "text/plain" }))).toBe(415);
+    expect(await status(post(`${s.url}/v1/systemone`, systemOneBody("x"), { "content-type": "application/jsonfoo" }))).toBe(415);
     expect(await status(post(`${s.url}/v1/systemone`, systemOneBody("x".repeat(70_000))))).toBe(413);
     expect(await status(post(`${s.url}/v1/systemone`, "{not json"))).toBe(400);
     expect(await status(fetch(`${s.url}/v1/route`))).toBe(405);
@@ -70,6 +71,7 @@ test("AC7: loopback only; Origin, foreign Host, non-JSON, oversized bodies and w
     expect(await status(post(`${s.url}/v1/route`, { policyId: "missing", evidence: "", constraints: { contextTokens: 0 } }))).toBe(404);
     expect(await status(post(`${s.url}/v1/route`, { policyId: "test.chat", evidence: "", constraints: {} }))).toBe(400);
     expect(fake.seen).toHaveLength(0);
+    expect(await status(post(`${s.url}/v1/systemone`, systemOneBody("x"), { "content-type": "application/json; charset=utf-8" }))).toBe(200);
   } finally { s.stop(); fake.stop(); }
 });
 

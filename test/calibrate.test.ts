@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendFit, calibrate, fitThreshold, loadFits, modelsReport, temper } from "../src/calibrate.ts";
 import { EXIT, main } from "../src/cli.ts";
@@ -106,6 +106,22 @@ test("an explicit minMargin wins over the fit's threshold; a torn fits line is s
     expect(fits).toHaveLength(1);
     expect((await decide({ question, state: "row 2" }, p, { shadowDir: null, fits, ...noKey })).reason).toBe("low_margin");
     expect((await decide({ question, state: "row 2", minMargin: 0 }, p, { shadowDir: null, fits, ...noKey })).abstain).toBe(false);
+  } finally { fake.stop(); }
+});
+
+test("review: a fit threshold of 1 always abstains, even on a certain answer; an unreadable fits file is an error, not no fits", async () => {
+  const { table, rows } = synthetic(200);
+  const fake = fakeServer(body => systemOneAnswer(table.get(body.state) ?? { implement: 1, review: 0, plan: 0 }));
+  try {
+    const home = tempDir(), p = provider(fake.url);
+    await appendFit(home, { ...(await calibrate(question, rows, p, noKey)), minMargin: 1 });
+    const fits = await loadFits(home);
+    const d = await decide({ question, state: "certain" }, p, { shadowDir: null, fits, ...noKey });
+    expect(d).toMatchObject({ margin: 1, abstain: true, reason: "low_margin", choice: null });
+    chmodSync(join(home, "calibration", "fits.jsonl"), 0o000);
+    try { await expect(loadFits(home)).rejects.toThrow(UsageError); }
+    finally { chmodSync(join(home, "calibration", "fits.jsonl"), 0o600); }
+    expect(await loadFits(tempDir())).toEqual([]);
   } finally { fake.stop(); }
 });
 

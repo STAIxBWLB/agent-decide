@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { checkProvider, type Config, type ProviderConfig } from "./config.ts";
 import { parseQuestion, topTwo, UsageError, type Question } from "./contract.ts";
@@ -49,7 +49,7 @@ export function fitTemperature(points: Point[]): number {
   return Math.exp((a + b) / 2);
 }
 
-/** The smallest margin whose answered rows reach the target accuracy; none reaches it -> 1 (abstain unless certain). */
+/** The smallest margin whose answered rows reach the target accuracy; none reaches it -> 1, which decide treats as always abstain. */
 export function fitThreshold(question: Question, points: Point[], targetAccuracy: number): number {
   const scored = points.map(p => { const top = topTwo(question, p.probabilities); return { margin: top.margin, correct: top.choice === p.label }; })
     .sort((x, y) => x.margin - y.margin);
@@ -111,9 +111,13 @@ export function parseFit(raw: unknown): Fit {
 /** Fits in append order; a torn or foreign line is skipped, a missing file is no fits. */
 export async function loadFits(home: string): Promise<Fit[]> {
   if (typeof home !== "string" || !home) throw new UsageError("loadFits: give the ADEC_HOME directory");
-  let text: string;
-  try { text = await readTextBounded(fitsFile(home), FITS_BYTES, "calibration fits"); }
-  catch (e) { if (e instanceof UsageError && /cannot read/.test(e.message)) return []; throw e; }
+  // Only a missing file is "no fits"; an unreadable one must not silently switch calibration off.
+  try { await stat(fitsFile(home)); }
+  catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new UsageError(`calibration fits: cannot read ${fitsFile(home)} (${(e as NodeJS.ErrnoException).code ?? "error"}); fix its permissions or move it away`);
+  }
+  const text = await readTextBounded(fitsFile(home), FITS_BYTES, "calibration fits");
   const fits: Fit[] = [];
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;

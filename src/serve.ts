@@ -81,7 +81,7 @@ export async function serve(options: ServeOptions): Promise<ServerHandle> {
     if (path === "/v1/health") return req.method === "GET" ? reply(200, { ok: true, version: VERSION }) : refuse(405, "use GET");
     if (path !== "/v1/systemone" && path !== "/v1/route") return refuse(404, "unknown path; use /v1/systemone, /v1/route or /v1/health");
     if (req.method !== "POST") return refuse(405, "use POST");
-    if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return refuse(415, "send the body as application/json");
+    if ((req.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase() !== "application/json") return refuse(415, "send the body as application/json");
     if (Number(req.headers.get("content-length") ?? 0) > BODY_BYTES) return refuse(413, `the body is larger than ${BODY_BYTES} bytes`);
     const text = await readBodyBounded(req, BODY_BYTES);
     if (text === undefined) return refuse(413, `the body is larger than ${BODY_BYTES} bytes`);

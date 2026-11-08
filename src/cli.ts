@@ -113,7 +113,7 @@ async function run(p: Parsed, io: Io): Promise<number> {
         `${fit.questionId} on ${fit.provider}/${fit.model}: n ${fit.n}, temperature ${fmt(fit.temperature)}, min margin ${fmt(fit.minMargin)} (target accuracy ${fmt(fit.targetAccuracy, 2)})`,
         `held-out ${fit.metrics.raw.n} raw:        ${m(fit.metrics.raw)}`,
         `held-out ${fit.metrics.raw.n} calibrated: ${m(fit.metrics.calibrated)}`,
-        saved ? "saved; adec ask and adec serve apply it from the next call" : "preview only; rerun with --confirm to save the fit",
+        saved ? "saved; adec ask and adec mcp apply it from the next call, a running adec serve after SIGHUP (kill -HUP <pid>)" : "preview only; rerun with --confirm to save the fit",
       ].join("\n"));
       return EXIT.ok;
     }

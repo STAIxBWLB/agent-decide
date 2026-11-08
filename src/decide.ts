@@ -68,6 +68,8 @@ export async function decide(request: AskRequest, provider: ProviderConfig, opti
   const fit = options.fits && findFit(options.fits, question.questionId, provider);
   // An explicit minMargin wins over the fit's threshold; the fit's temperature applies either way.
   const minMargin = asked ?? fit?.minMargin ?? 0;
+  // A fit threshold of 1 means no margin reached the target accuracy: always abstain, even on a certain answer.
+  const abstainAll = asked === undefined && fit?.minMargin === 1;
   const id = randomBytes(16).toString("hex");
   const started = performance.now();
   let answer: ProviderAnswer | undefined, reason: Reason = "ok", error: string | undefined;
@@ -92,7 +94,7 @@ export async function decide(request: AskRequest, provider: ProviderConfig, opti
   if (answer) {
     const top = topTwo(question, answer.probabilities);
     margin = top.margin;
-    if (margin < minMargin) reason = "low_margin";
+    if (margin < minMargin || abstainAll) reason = "low_margin";
     else choice = top.choice;
   }
   const decision: Decision = {

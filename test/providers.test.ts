@@ -153,3 +153,13 @@ test("review F4: the library entry point validates the question and request like
   await expect(decide({ question, state: "s", pii: "yes" as never }, p, noKey)).rejects.toThrow(UsageError);
   await expect(decide({ question, state: "s", extra: 1 } as never, p, noKey)).rejects.toThrow(UsageError);
 });
+
+test("review r7: probabilities are renormalized before the margin is compared", async () => {
+  const q2 = { questionId: "two.v1", instructions: "x", options: [{ id: "a" }, { id: "b" }] };
+  const fake = fakeServer(() => Response.json({ answers: { decision: { type: "choice", choice: "a", probabilities: { a: 0.8005, b: 0.2004 } } } }));
+  try {
+    const d = await decide({ question: q2, state: "s", minMargin: 0.6 }, provider(fake.url), noKey);
+    expect(d.probabilities.a! + d.probabilities.b!).toBeCloseTo(1, 12);
+    expect(d).toMatchObject({ abstain: true, reason: "low_margin", choice: null });
+  } finally { fake.stop(); }
+});

@@ -43,7 +43,11 @@ function checkAnswer(provider: ProviderConfig, question: Question, answer: Provi
     return Object.hasOwn(probs, id) && typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
   }) && Math.abs(ids.reduce((s, id) => s + probs[id]!, 0) - 1) <= 0.001;
   if (!ok) throw new ProviderError("malformed", provider.name, "probabilities are not a distribution over the options");
-  return answer;
+  // Renormalize over the options (spec #2) so a sum within tolerance cannot move a margin across a threshold.
+  const sum = ids.reduce((s, id) => s + probs[id]!, 0);
+  const probabilities: Record<string, number> = {};
+  for (const id of ids) probabilities[id] = probs[id]! / sum;
+  return { ...answer, probabilities };
 }
 
 /**

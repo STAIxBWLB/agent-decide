@@ -17,7 +17,7 @@ export interface AskRequest { question: Question; state: string; pii?: boolean; 
 /** The configured model name is reported, never a server-supplied string (it could reflect the key or the state). */
 export interface ProviderAnswer { probabilities: Record<string, number>; labelMass?: number }
 
-export interface Decider { provider: string; kind: string; model: string; latencyMs: number }
+export interface Decider { provider: string; kind: string; model: string; version?: string; latencyMs: number }
 export interface Decision {
   id: string;
   questionId: string;

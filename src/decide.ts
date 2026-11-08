@@ -102,7 +102,7 @@ export async function decide(request: AskRequest, provider: ProviderConfig, opti
     abstain: choice === null, reason,
     ...(answer?.labelMass === undefined ? {} : { labelMass: answer.labelMass }),
     ...(fit ? { calibration: { questionId: fit.questionId, method: fit.method, fittedAt: fit.fittedAt } } : {}),
-    decider: { provider: provider.name, kind: provider.kind, model: provider.model, latencyMs },
+    decider: { provider: provider.name, kind: provider.kind, model: provider.model, ...(provider.version === undefined ? {} : { version: provider.version }), latencyMs },
   };
   if (options.shadowDir !== null) await appendDecision(options.shadowDir, question, decision, createHash("sha256").update(state).digest("hex"));
   return error === undefined ? decision : { ...decision, error };

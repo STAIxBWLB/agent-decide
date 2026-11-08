@@ -1,10 +1,11 @@
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { appendFit, calibrate, loadFits, modelsReport, parseTargetAccuracy } from "./calibrate.ts";
 import { COMMANDS, type CommandSpec } from "./commands-table.ts";
 import { adecHome, loadConfig, selectProvider } from "./config.ts";
 import { parseMinMargin, parseQuestion, UsageError } from "./contract.ts";
 import { decide } from "./decide.ts";
-import { evaluate, parseRows } from "./eval.ts";
+import { compareRows, evaluate, parseCompareOptions, parseResultRows, parseRows } from "./eval.ts";
 import { readJsonBounded, readStdinBounded, readTextBounded } from "./io.ts";
 import { serveMcp } from "./mcp.ts";
 import { loadPolicy } from "./policy.ts";
@@ -91,11 +92,43 @@ async function run(p: Parsed, io: Io): Promise<number> {
       const limit = limitRaw === undefined ? undefined : Number(limitRaw);
       if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) throw new UsageError("eval: --limit must be a positive integer");
       const provider = selectProvider(await loadConfig(home), p.values["--provider"]);
-      const r = await evaluate(question, rows, provider, { minMargin: parseMinMargin(p.values["--min-margin"]), ...(limit === undefined ? {} : { limit }) });
+      const flipFile = p.values["--flip-question"], rowsOut = p.values["--rows-out"];
+      const flipQuestion = flipFile === undefined ? undefined : parseQuestion(await readJsonBounded(flipFile, QUESTION_BYTES, "flip question file"));
+      let handle;
+      if (rowsOut !== undefined) {
+        try { handle = await open(rowsOut, "wx", 0o600); }
+        catch { throw new UsageError("eval: cannot create rows-out file; give a new writable file path (existing files are refused)"); }
+      }
+      let r;
+      try {
+        r = await evaluate(question, rows, provider, { minMargin: parseMinMargin(p.values["--min-margin"]), ...(limit === undefined ? {} : { limit }), perRow: handle !== undefined, ...(flipQuestion ? { flipQuestion } : {}) });
+        if (handle) {
+          try { await handle.writeFile(r.rows!.map(row => JSON.stringify(row) + "\n").join("")); }
+          catch { throw new UsageError("eval: cannot write rows-out file"); }
+        }
+      } finally { await handle?.close(); }
+      // Per-row results belong to the requested file, not pooled command output.
+      delete r.rows;
       print(r, [
-        `${r.questionId} on ${r.provider}/${r.model}: n ${r.n}, skipped ${r.skipped}, answered ${r.answered}`,
+        `${r.questionId} on ${r.provider}/${r.model}${r.version === undefined ? "" : ` ${r.version}`}: n ${r.n}, skipped ${r.skipped}, answered ${r.answered}`,
         `accuracy ${fmt(r.accuracy)}  coverage ${fmt(r.coverage)}  macro-F1 ${fmt(r.macroF1)}  ECE ${fmt(r.ece)}  Brier ${fmt(r.brier)}`,
+        ...(r.flip ? [`flip n ${r.flip.n}, both answered ${r.flip.bothAnswered}, agreed ${r.flip.agreed}, agreement ${fmt(r.flip.agreement)}`] : []),
+        ...Object.entries(r.slices).map(([tag, s]) => `slice ${tag}: n ${s.n}, answered ${s.answered}, accuracy ${fmt(s.accuracy)}, coverage ${fmt(s.coverage)}, macro-F1 ${fmt(s.macroF1)}, ECE ${fmt(s.ece)}, Brier ${fmt(s.brier)}`),
         `latency p50 ${r.latencyMs.p50 ?? "-"} ms, p95 ${r.latencyMs.p95 ?? "-"} ms; abstained ${JSON.stringify(r.abstained)}`,
+      ].join("\n"));
+      return EXIT.ok;
+    }
+    case "eval compare": {
+      noPositional(p, 2);
+      const opts = parseCompareOptions({ seed: Number(need(p, "--seed")), ...(p.values["--resamples"] === undefined ? {} : { resamples: Number(p.values["--resamples"]) }) });
+      const a = parseResultRows(await readTextBounded(p.positional[0]!, SET_BYTES, "eval results A"));
+      const b = parseResultRows(await readTextBounded(p.positional[1]!, SET_BYTES, "eval results B"));
+      const r = await compareRows(a, b, opts);
+      print(r, [
+        `n ${r.n}, both correct ${r.bothCorrect}, A only ${r.aOnly}, B only ${r.bOnly}, both wrong ${r.bothWrong}`,
+        `accuracy A ${fmt(r.accuracyA)}, B ${fmt(r.accuracyB)}, diff (B - A) ${fmt(r.diff)}, McNemar p ${fmt(r.mcnemarP, 6)}, agreement ${fmt(r.agreement)}`,
+        `bootstrap seed ${r.bootstrap.seed}, resamples ${r.bootstrap.resamples}, 95% interval [${fmt(r.bootstrap.lo)}, ${fmt(r.bootstrap.hi)}]`,
+        ...Object.entries(r.slices).map(([tag, s]) => `slice ${tag}: n ${s.n}, accuracy A ${fmt(s.accuracyA)}, B ${fmt(s.accuracyB)}, diff ${fmt(s.diff)}`),
       ].join("\n"));
       return EXIT.ok;
     }

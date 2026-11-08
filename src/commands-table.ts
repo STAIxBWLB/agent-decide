@@ -4,8 +4,10 @@ const json = { "--json": "flag" } as const;
 export const COMMANDS: readonly CommandSpec[] = [
   { name: "ask", usage: "ask --question FILE (--state TEXT | --state-file FILE | --state -) [--pii] [--min-margin X] [--provider NAME] [--json]", summary: "ask one choice question; exit 0 decided, 3 abstained",
     options: { "--question": "value", "--state": "value", "--state-file": "value", "--pii": "flag", "--min-margin": "value", "--provider": "value", ...json } },
-  { name: "eval", usage: "eval --question FILE --set FILE [--provider NAME] [--limit N] [--min-margin X] [--json]", summary: "replay a labelled JSONL set; writes no shadow records",
-    options: { "--question": "value", "--set": "value", "--provider": "value", "--limit": "value", "--min-margin": "value", ...json } },
+  { name: "eval", usage: "eval --question FILE --set FILE [--provider NAME] [--limit N] [--min-margin X] [--rows-out FILE] [--flip-question FILE] [--json]", summary: "replay a labelled JSONL set; writes no shadow records",
+    options: { "--question": "value", "--set": "value", "--provider": "value", "--limit": "value", "--min-margin": "value", "--rows-out": "value", "--flip-question": "value", ...json } },
+  { name: "eval compare", usage: "eval compare A B --seed N [--resamples N] [--json]", summary: "paired content-free row comparison with an explicit bootstrap seed",
+    options: { "--seed": "value", "--resamples": "value", ...json } },
   { name: "calibrate", usage: "calibrate --question FILE --set FILE [--provider NAME] [--target-accuracy X] [--confirm] [--json]", summary: "fit a temperature and margin threshold on a labelled set; saves only with --confirm",
     options: { "--question": "value", "--set": "value", "--provider": "value", "--target-accuracy": "value", "--confirm": "flag", ...json } },
   { name: "route", usage: "route --request FILE|- [--json]", summary: "choose a model alias and effort from a policy; exit 0 picked, 3 no candidate",

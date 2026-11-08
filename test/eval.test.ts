@@ -62,3 +62,17 @@ test("review F5: calibration uses the decision's tie rule with numeric option id
     expect(r.ece).toBeCloseTo(0.5); // confidence 0.5, correct
   } finally { fake.stop(); }
 });
+
+test("review r3: the library evaluate() validates rows, question and limit before any provider call", async () => {
+  const fake = fakeServer(() => systemOneAnswer({ implement: 1, review: 0, plan: 0 }));
+  try {
+    const p = provider(fake.url);
+    const opts = { key: async () => undefined };
+    await expect(evaluate(question, [{ state: "s", label: "other" }], p, opts)).rejects.toThrow(UsageError);
+    await expect(evaluate(question, [{ state: 1 as never, label: "plan" }], p, opts)).rejects.toThrow(UsageError);
+    await expect(evaluate({ ...question, options: [{ id: "a" }] }, [], p, opts)).rejects.toThrow(UsageError);
+    await expect(evaluate(question, [{ state: "s", label: "plan" }], p, { ...opts, limit: 0 })).rejects.toThrow(UsageError);
+    await expect(evaluate(question, [{ state: "s", label: "plan" }], p, { ...opts, minMargin: 2 })).rejects.toThrow(UsageError);
+    expect(fake.seen).toHaveLength(0);
+  } finally { fake.stop(); }
+});

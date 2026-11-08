@@ -1,5 +1,5 @@
 import type { ProviderConfig } from "./config.ts";
-import { topTwo, UsageError, type Question } from "./contract.ts";
+import { parseMinMargin, parseQuestion, topTwo, UsageError, type Question } from "./contract.ts";
 import { decide, type DecideOptions } from "./decide.ts";
 
 export interface EvalRow { state: string; label: string; pii?: boolean }
@@ -10,6 +10,18 @@ export interface EvalReport {
   latencyMs: { p50: number | null; p95: number | null };
 }
 
+/** One row check for the CLI file reader and the library entry point alike. */
+function parseRow(raw: unknown, ids: Set<string>, where: string): EvalRow {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`${where}: expected an object`);
+  const r = raw as Record<string, unknown>;
+  const unknown = Object.keys(r).filter(k => !["id", "state", "label", "pii"].includes(k));
+  if (unknown.length) throw new UsageError(`${where}: unknown field ${unknown.join(", ")}; allowed fields are id, state, label, pii`);
+  if (typeof r.state !== "string") throw new UsageError(`${where}: state must be a string`);
+  if (typeof r.label !== "string" || !ids.has(r.label)) throw new UsageError(`${where}: label must be one of the question's option ids`);
+  if (r.pii !== undefined && typeof r.pii !== "boolean") throw new UsageError(`${where}: pii must be true or false`);
+  return { state: r.state, label: r.label, ...(r.pii ? { pii: true } : {}) };
+}
+
 export function parseRows(text: string, question: Question): EvalRow[] {
   const ids = new Set(question.options.map(o => o.id));
   const rows: EvalRow[] = [];
@@ -17,14 +29,7 @@ export function parseRows(text: string, question: Question): EvalRow[] {
     if (!line.trim()) return;
     let raw: unknown;
     try { raw = JSON.parse(line); } catch { throw new UsageError(`set line ${i + 1}: not valid JSON`); }
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`set line ${i + 1}: expected an object`);
-    const r = raw as Record<string, unknown>;
-    const unknown = Object.keys(r).filter(k => !["id", "state", "label", "pii"].includes(k));
-    if (unknown.length) throw new UsageError(`set line ${i + 1}: unknown field ${unknown.join(", ")}; allowed fields are id, state, label, pii`);
-    if (typeof r.state !== "string") throw new UsageError(`set line ${i + 1}: state must be a string`);
-    if (typeof r.label !== "string" || !ids.has(r.label)) throw new UsageError(`set line ${i + 1}: label must be one of the question's option ids`);
-    if (r.pii !== undefined && typeof r.pii !== "boolean") throw new UsageError(`set line ${i + 1}: pii must be true or false`);
-    rows.push({ state: r.state, label: r.label, ...(r.pii ? { pii: true } : {}) });
+    rows.push(parseRow(raw, ids, `set line ${i + 1}`));
   });
   return rows;
 }
@@ -62,13 +67,20 @@ export function macroF1(pairs: { predicted: string; label: string }[]): number |
 
 /** Replay a labelled set sequentially; writes no shadow records. ponytail: sequential and no retries, add concurrency when sets grow past a few thousand rows. */
 export async function evaluate(question: Question, rows: EvalRow[], provider: ProviderConfig, options: Omit<DecideOptions, "shadowDir"> & { limit?: number; minMargin?: number } = {}): Promise<EvalReport> {
+  // Validate everything before the first provider call, with the CLI's rules.
+  question = parseQuestion(question);
+  const ids = new Set(question.options.map(o => o.id));
+  if (!Array.isArray(rows)) throw new UsageError("eval: rows must be an array");
+  rows = rows.map((r, i) => parseRow(r, ids, `rows[${i}]`));
+  if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1)) throw new UsageError("eval: limit must be a positive integer");
+  const minMargin = parseMinMargin(options.minMargin);
   const used = options.limit === undefined ? rows : rows.slice(0, options.limit);
   const abstained: Record<string, number> = {};
   const latencies: number[] = [], pairs: { predicted: string; label: string }[] = [], calibration: { confidence: number; correct: boolean }[] = [];
   let skipped = 0, brierSum = 0, model = provider.model;
   for (const row of used) {
     if (row.pii && !provider.onPrem) { skipped++; continue; }
-    const d = await decide({ question, state: row.state, minMargin: options.minMargin ?? 0 }, provider, { shadowDir: null, ...(options.key ? { key: options.key } : {}) });
+    const d = await decide({ question, state: row.state, minMargin }, provider, { shadowDir: null, ...(options.key ? { key: options.key } : {}) });
     model = d.decider.model;
     if (d.reason !== "state_too_long" && d.reason !== "off_prem") latencies.push(d.decider.latencyMs);
     if (d.abstain) abstained[d.reason] = (abstained[d.reason] ?? 0) + 1;

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { appendFileSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { UsageError } from "../src/contract.ts";
 import { decide } from "../src/decide.ts";
@@ -34,5 +34,20 @@ test("outcome labels must be an option id or a closed word, for a known decision
     await expect(labelOutcome(dir, "0".repeat(32), "accepted")).rejects.toThrow(UsageError);
     await expect(labelOutcome(dir, "short", "accepted")).rejects.toThrow(UsageError);
     expect((await labelOutcome(dir, d.id, "accepted")).label).toBe("accepted");
+  } finally { fake.stop(); }
+});
+
+test("review r2: a torn last line does not swallow the next records", async () => {
+  const dir = tempDir();
+  const fake = fakeServer(() => systemOneAnswer({ implement: 0.8, review: 0.1, plan: 0.1 }));
+  try {
+    const opts = { shadowDir: dir, key: async () => undefined };
+    await decide({ question, state: "s" }, provider(fake.url), opts);
+    const file = join(dir, readdirSync(dir)[0]!);
+    appendFileSync(file, '{"v":1,"kind":"decision","id":"to'); // crash mid-write
+    const d = await decide({ question, state: "s" }, provider(fake.url), opts);
+    await labelOutcome(dir, d.id, "implement");
+    const [r] = await shadowReport(dir);
+    expect(r).toMatchObject({ decisions: 2, labelled: 1, agreement: 1 });
   } finally { fake.stop(); }
 });

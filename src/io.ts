@@ -1,13 +1,27 @@
-import { stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { UsageError } from "./contract.ts";
 
-/** Read a regular file of at most `max` bytes as UTF-8; anything else is a usage error naming the file. */
+/**
+ * Read a regular file of at most `max` bytes as UTF-8; anything else is a usage error naming the file.
+ * The bound applies to the bytes actually read from one open handle, so a file that grows after the check cannot exceed it.
+ */
 export async function readTextBounded(path: string, max: number, what: string): Promise<string> {
-  let info;
-  try { info = await stat(path); } catch { throw new UsageError(`${what}: cannot read ${path}; check that the file exists and is readable`); }
-  if (!info.isFile()) throw new UsageError(`${what}: ${path} is not a regular file`);
-  if (info.size > max) throw new UsageError(`${what}: ${path} is ${info.size} bytes; the limit is ${max}`);
-  return await Bun.file(path).text();
+  let handle;
+  try { handle = await open(path, "r"); } catch { throw new UsageError(`${what}: cannot read ${path}; check that the file exists and is readable`); }
+  try {
+    if (!(await handle.stat()).isFile()) throw new UsageError(`${what}: ${path} is not a regular file`);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for (;;) {
+      const buf = Buffer.alloc(Math.min(1024 * 1024, max + 1 - size));
+      const { bytesRead } = await handle.read(buf, 0, buf.length, null);
+      if (bytesRead === 0) break;
+      size += bytesRead;
+      if (size > max) throw new UsageError(`${what}: ${path} is larger than the ${max}-byte limit`);
+      chunks.push(buf.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  } finally { await handle.close(); }
 }
 
 export async function readJsonBounded(path: string, max: number, what: string): Promise<unknown> {

@@ -56,6 +56,10 @@ test("AC7: /v1/systemone answers the System One shape plus adec fields; /v1/rout
 
 test("AC7: loopback only; Origin, foreign Host, non-JSON, oversized bodies and wrong methods are refused", async () => {
   await expect(serve({ home: tempDir(), port: 0, host: "0.0.0.0" })).rejects.toThrow(UsageError);
+  // An occupied port names the cause and the fix.
+  const busy = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("") });
+  try { await expect(serve({ home: home("http://127.0.0.1:9"), port: busy.port! })).rejects.toThrow(/--port/); }
+  finally { busy.stop(true); }
   const fake = fakeServer(() => systemOneAnswer({ implement: 1, review: 0, plan: 0 }));
   const s = await serve({ home: home(fake.url), port: 0 });
   try {

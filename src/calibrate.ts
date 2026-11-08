@@ -1,16 +1,18 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { checkProvider, type Config, type ProviderConfig } from "./config.ts";
 import { parseQuestion, topTwo, unknownFields, UsageError, type Question } from "./contract.ts";
 import { decide, type DecideOptions } from "./decide.ts";
 import { brierScore, ece, parseRow, type EvalRow } from "./eval.ts";
-import { readTextBounded } from "./io.ts";
+import { appendLine, readTextBounded } from "./io.ts";
 
 /** One temperature and margin threshold for (questionId, provider name, kind, model, version, endpoint). Spec #4. */
 export interface Fit {
   v: 1; questionId: string; provider: string; kind: string; model: string; version?: string; endpointSha256: string;
-  method: "temperature"; temperature: number; minMargin: number; targetAccuracy: number; fittedAt: string;
+  method: "temperature"; temperature: number;
+  /** null: no margin reached the target accuracy, so the question always abstains. */
+  minMargin: number | null; targetAccuracy: number; fittedAt: string;
   n: number; setSha256: string; metrics: { raw: SplitMetrics; calibrated: SplitMetrics };
 }
 /** Held-out metrics; coverage and selective accuracy are at the fitted threshold (raw: threshold 0). */
@@ -49,8 +51,8 @@ export function fitTemperature(points: Point[]): number {
   return Math.exp((a + b) / 2);
 }
 
-/** The smallest margin whose answered rows reach the target accuracy; none reaches it -> 1, which decide treats as always abstain. */
-export function fitThreshold(question: Question, points: Point[], targetAccuracy: number): number {
+/** The smallest margin whose answered rows reach the target accuracy; null when none does (always abstain). */
+export function fitThreshold(question: Question, points: Point[], targetAccuracy: number): number | null {
   const scored = points.map(p => { const top = topTwo(question, p.probabilities); return { margin: top.margin, correct: top.choice === p.label }; })
     .sort((x, y) => x.margin - y.margin);
   let correct = scored.filter(s => s.correct).length;
@@ -60,12 +62,12 @@ export function fitThreshold(question: Question, points: Point[], targetAccuracy
     if (correct / (scored.length - i) >= targetAccuracy) return i === 0 ? 0 : scored[i]!.margin;
     correct -= scored[i]!.correct ? 1 : 0;
   }
-  return 1;
+  return null;
 }
 
-function metrics(question: Question, points: Point[], minMargin: number): SplitMetrics {
+function metrics(question: Question, points: Point[], minMargin: number | null): SplitMetrics {
   const scored = points.map(p => { const top = topTwo(question, p.probabilities); return { ...top, correct: top.choice === p.label, p }; });
-  const answered = scored.filter(s => s.margin >= minMargin);
+  const answered = minMargin === null ? [] : scored.filter(s => s.margin >= minMargin);
   return {
     n: points.length,
     accuracy: scored.filter(s => s.correct).length / points.length,
@@ -105,7 +107,7 @@ export function parseFit(raw: unknown): Fit {
     && closed(f.metrics, ["raw", "calibrated"]) && f.v === 1 && f.method === "temperature"
     && typeof f.questionId === "string" && typeof f.provider === "string" && typeof f.kind === "string" && typeof f.model === "string"
     && (f.version === undefined || typeof f.version === "string") && typeof f.endpointSha256 === "string" && /^[0-9a-f]{64}$/.test(f.endpointSha256)
-    && num(f.temperature, T_MIN, T_MAX) && num(f.minMargin, 0, 1) && num(f.targetAccuracy, 0, 1) && typeof f.fittedAt === "string" && !Number.isNaN(Date.parse(f.fittedAt))
+    && num(f.temperature, T_MIN, T_MAX) && (f.minMargin === null || num(f.minMargin, 0, 1)) && num(f.targetAccuracy, 0, 1) && typeof f.fittedAt === "string" && !Number.isNaN(Date.parse(f.fittedAt))
     && Number.isInteger(f.n) && f.n >= MIN_ANSWERED && typeof f.setSha256 === "string" && typeof f.metrics === "object" && f.metrics !== null && split(f.metrics.raw) && split(f.metrics.calibrated);
   if (!ok) throw new UsageError("calibration fit: not a fit record written by adec calibrate; refit with adec calibrate --confirm");
   return f;
@@ -130,9 +132,8 @@ export async function loadFits(home: string): Promise<Fit[]> {
 }
 
 export async function appendFit(home: string, fit: Fit): Promise<void> {
-  const line = `${JSON.stringify(parseFit(fit))}\n`; // validate before any write
-  await mkdir(join(home, "calibration"), { recursive: true, mode: 0o700 });
-  await appendFile(fitsFile(home), line, { mode: 0o600 });
+  const line = JSON.stringify(parseFit(fit)); // validate before any write
+  await appendLine(fitsFile(home), line);
 }
 
 export function parseTargetAccuracy(raw: unknown): number {
@@ -183,7 +184,7 @@ export async function calibrate(question: Question, rows: EvalRow[], provider: P
 
 export interface ModelEntry {
   name: string; kind: string; model: string; version?: string; sha256?: string; onPrem: boolean; default: boolean;
-  fits: { questionId: string; status: "fitted" | "stale"; fittedAt: string; temperature: number; minMargin: number }[];
+  fits: { questionId: string; status: "fitted" | "stale"; fittedAt: string; temperature: number; minMargin: number | null }[];
 }
 
 /** The registry view: providers plus, per questionId, the newest fit under the provider's name and whether it still applies. */

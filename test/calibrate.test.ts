@@ -109,15 +109,18 @@ test("an explicit minMargin wins over the fit's threshold; a torn fits line is s
   } finally { fake.stop(); }
 });
 
-test("review: a fit threshold of 1 always abstains, even on a certain answer; an unreadable fits file is an error, not no fits", async () => {
+test("review: a null fit threshold always abstains, a fitted threshold of 1 still answers margin 1; an unreadable fits file is an error", async () => {
   const { table, rows } = synthetic(200);
   const fake = fakeServer(body => systemOneAnswer(table.get(body.state) ?? { implement: 1, review: 0, plan: 0 }));
   try {
     const home = tempDir(), p = provider(fake.url);
-    await appendFit(home, { ...(await calibrate(question, rows, p, noKey)), minMargin: 1 });
+    const fit = await calibrate(question, rows, p, noKey);
+    const ask = (minMargin: number | null) => decide({ question, state: "certain" }, p, { shadowDir: null, fits: [{ ...fit, minMargin }], ...noKey });
+    expect(await ask(null)).toMatchObject({ margin: 1, abstain: true, reason: "low_margin", choice: null });
+    expect(await ask(1)).toMatchObject({ margin: 1, abstain: false, choice: "implement" });
+    await appendFit(home, { ...fit, minMargin: null });
     const fits = await loadFits(home);
-    const d = await decide({ question, state: "certain" }, p, { shadowDir: null, fits, ...noKey });
-    expect(d).toMatchObject({ margin: 1, abstain: true, reason: "low_margin", choice: null });
+    expect(fits[0]!.minMargin).toBeNull();
     chmodSync(join(home, "calibration", "fits.jsonl"), 0o000);
     try { await expect(loadFits(home)).rejects.toThrow(UsageError); }
     finally { chmodSync(join(home, "calibration", "fits.jsonl"), 0o600); }
@@ -130,17 +133,23 @@ test("review: a fit threshold of 1 always abstains, even on a certain answer; an
     await expect(appendFit(empty, { ...fits[0]!, metrics: { ...fits[0]!.metrics, raw: { ...fits[0]!.metrics.raw, x: 1 } } } as never)).rejects.toThrow(UsageError);
     writeFileSync(join(home, "calibration", "fits.jsonl"), `${JSON.stringify(extra)}\n`);
     expect(await loadFits(home)).toEqual([]);
+    // A torn last line does not swallow the next confirmed fit.
+    writeFileSync(join(home, "calibration", "fits.jsonl"), '{"v":1,"torn');
+    await appendFit(home, fits[0]!);
+    expect(await loadFits(home)).toHaveLength(1);
   } finally { fake.stop(); }
 });
 
-test("threshold: smallest margin reaching the target, ties kept together, 1 when unreachable", () => {
+test("threshold: smallest margin reaching the target, ties kept together, null when unreachable", () => {
   const pt = (implement: number, review: number, label: string) => ({ probabilities: { implement, review, plan: 1 - implement - review }, label });
   // margins 0.1 (wrong), 0.5 (right), 0.5 (wrong), 0.9 (right)
   const points = [pt(0.5, 0.4, "review"), pt(0.7, 0.2, "implement"), pt(0.7, 0.2, "review"), pt(0.95, 0.05, "implement")];
   expect(fitThreshold(question, points, 0.5)).toBe(0);
   expect(fitThreshold(question, points, 0.6)).toBeCloseTo(0.5);
   expect(fitThreshold(question, points, 0.9)).toBeCloseTo(0.9);
-  expect(fitThreshold(question, [pt(0.6, 0.3, "review")], 0.9)).toBe(1);
+  expect(fitThreshold(question, [pt(0.6, 0.3, "review")], 0.9)).toBeNull();
+  // Reachable only at margin 1: a real threshold of 1, not the unreachable case.
+  expect(fitThreshold(question, [pt(0.6, 0.2, "review"), pt(1, 0, "implement")], 0.9)).toBe(1);
 });
 
 test("config: version and sha256 are pinned and validated", () => {

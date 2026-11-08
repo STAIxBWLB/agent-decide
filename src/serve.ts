@@ -94,17 +94,23 @@ export async function serve(options: ServeOptions): Promise<ServerHandle> {
   }
 
   let hosts = new Set<string>();
-  const server = Bun.serve({
-    hostname: host, port,
-    async fetch(req) {
-      try { return await handle(req, hosts); }
-      catch (e) {
-        if (e instanceof UsageError) return refuse(400, e.message);
-        log(`adec serve: unexpected ${e instanceof Error ? e.name : "error"} on ${new URL(req.url).pathname}`);
-        return refuse(500, "unexpected server error; the operator log names the class");
-      }
-    },
-  });
+  let server: ReturnType<typeof Bun.serve>;
+  try {
+    server = Bun.serve({
+      hostname: host, port,
+      async fetch(req) {
+        try { return await handle(req, hosts); }
+        catch (e) {
+          if (e instanceof UsageError) return refuse(400, e.message);
+          log(`adec serve: unexpected ${e instanceof Error ? e.name : "error"} on ${new URL(req.url).pathname}`);
+          return refuse(500, "unexpected server error; the operator log names the class");
+        }
+      },
+    });
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    throw new UsageError(`serve: cannot listen on ${host}:${port}${code ? ` (${code})` : ""}; the port may be in use: pass another --port or stop the other server`);
+  }
   const bound = server.port!;
   hosts = new Set([`127.0.0.1:${bound}`, `localhost:${bound}`, `[::1]:${bound}`]);
   return {

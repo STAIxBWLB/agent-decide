@@ -110,7 +110,7 @@ async function run(p: Parsed, io: Io): Promise<number> {
       if (saved) await appendFit(home, fit);
       const m = (x: typeof fit.metrics.raw) => `accuracy ${fmt(x.accuracy)}  coverage ${fmt(x.coverage)}  selective ${fmt(x.selectiveAccuracy)}  ECE ${fmt(x.ece)}  Brier ${fmt(x.brier)}`;
       print({ fit, saved }, [
-        `${fit.questionId} on ${fit.provider}/${fit.model}: n ${fit.n}, temperature ${fmt(fit.temperature)}, min margin ${fmt(fit.minMargin)} (target accuracy ${fmt(fit.targetAccuracy, 2)})`,
+        `${fit.questionId} on ${fit.provider}/${fit.model}: n ${fit.n}, temperature ${fmt(fit.temperature)}, min margin ${fit.minMargin === null ? "none (no margin reaches the target: always abstain)" : fmt(fit.minMargin)} (target accuracy ${fmt(fit.targetAccuracy, 2)})`,
         `held-out ${fit.metrics.raw.n} raw:        ${m(fit.metrics.raw)}`,
         `held-out ${fit.metrics.raw.n} calibrated: ${m(fit.metrics.calibrated)}`,
         saved ? "saved; adec ask and adec mcp apply it from the next call, a running adec serve after SIGHUP (kill -HUP <pid>)" : "preview only; rerun with --confirm to save the fit",

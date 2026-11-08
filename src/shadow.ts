@@ -1,7 +1,7 @@
-import { appendFile, mkdir, open, readdir } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { OPTION_ID, OUTCOME_WORDS, UsageError, type Decision, type Question } from "./contract.ts";
-import { readTextBounded } from "./io.ts";
+import { appendLine, readTextBounded } from "./io.ts";
 
 /** Content-free decision log: ids, counts and closed words only. Never state, instructions or option descriptions. */
 export interface DecisionRecord {
@@ -26,18 +26,7 @@ const ID = /^[0-9a-f]{32}$/;
 export function shadowDir(home: string): string { return join(home, "shadow"); }
 
 async function append(dir: string, at: Date, row: object) {
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const file = join(dir, `${at.toISOString().slice(0, 7)}.jsonl`);
-  // A crash can leave a torn last line without "\n"; start a new line so this record is not glued onto it and lost.
-  let torn = false;
-  try {
-    const handle = await open(file, "r");
-    try {
-      const { size } = await handle.stat();
-      if (size > 0) { const last = Buffer.alloc(1); await handle.read(last, 0, 1, size - 1); torn = last[0] !== 0x0a; }
-    } finally { await handle.close(); }
-  } catch { /* no file yet */ }
-  await appendFile(file, `${torn ? "\n" : ""}${JSON.stringify(row)}\n`, { mode: 0o600 });
+  await appendLine(join(dir, `${at.toISOString().slice(0, 7)}.jsonl`), JSON.stringify(row));
 }
 
 export async function appendDecision(dir: string, question: Question, decision: Decision, stateSha256: string, at = new Date()) {

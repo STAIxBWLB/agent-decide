@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { appendFile, mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { checkProvider, type Config, type ProviderConfig } from "./config.ts";
-import { parseQuestion, topTwo, UsageError, type Question } from "./contract.ts";
+import { parseQuestion, topTwo, unknownFields, UsageError, type Question } from "./contract.ts";
 import { decide, type DecideOptions } from "./decide.ts";
 import { brierScore, ece, parseRow, type EvalRow } from "./eval.ts";
 import { readTextBounded } from "./io.ts";
@@ -151,7 +151,7 @@ export async function calibrate(question: Question, rows: EvalRow[], provider: P
   provider = checkProvider(provider);
   if (typeof options !== "object" || options === null) throw new UsageError("calibrate options: give an object");
   const unknown = Object.keys(options).filter(k => !["key", "targetAccuracy", "now"].includes(k));
-  if (unknown.length) throw new UsageError(`calibrate options: unknown field ${unknown.join(", ")}; allowed fields are key, targetAccuracy, now`);
+  if (unknown.length) throw new UsageError(`calibrate options: ${unknownFields(unknown, ["key", "targetAccuracy", "now"])}`);
   if (options.key !== undefined && typeof options.key !== "function") throw new UsageError("calibrate options.key: give a function or leave it out");
   if (options.now !== undefined && !(options.now instanceof Date && !Number.isNaN(options.now.getTime()))) throw new UsageError("calibrate options.now: give a valid Date");
   const targetAccuracy = parseTargetAccuracy(options.targetAccuracy);

@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { UsageError } from "./contract.ts";
+import { unknownFields, UsageError } from "./contract.ts";
 import { readJsonBounded, readTextBounded } from "./io.ts";
 
 export type ProviderKind = "systemone" | "logits";
@@ -51,7 +51,7 @@ export function parseProvider(name: string, raw: unknown): ProviderConfig {
   const allowed = ["kind", "endpoint", "model", "version", "sha256", "keyFile", "onPrem", "timeoutMs", "maxStateChars"];
   const p = raw as Record<string, unknown>;
   const unknown = Object.keys(p).filter(k => !allowed.includes(k));
-  if (unknown.length) fail(where, `remove unknown field ${unknown.join(", ")}`);
+  if (unknown.length) fail(where, `remove ${unknownFields(unknown, allowed)}`);
   if (p.kind !== "systemone" && p.kind !== "logits") fail(`${where}.kind`, 'use "systemone" or "logits"');
   if (typeof p.onPrem !== "boolean") fail(`${where}.onPrem`, "set true only for a decider on your own network, false otherwise");
   if (!pinned(p.model)) fail(`${where}.model`, "pin a model name and version; moving aliases such as \"latest\" or \"*-latest\" are not accepted");
@@ -93,7 +93,7 @@ export function parseConfig(raw: unknown): Config {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("file", "expected a JSON object with \"providers\"");
   const c = raw as Record<string, unknown>;
   const unknown = Object.keys(c).filter(k => k !== "providers" && k !== "default");
-  if (unknown.length) fail("file", `remove unknown field ${unknown.join(", ")}`);
+  if (unknown.length) fail("file", `remove ${unknownFields(unknown, ["providers", "default"])}`);
   if (typeof c.providers !== "object" || c.providers === null || Array.isArray(c.providers)) fail("providers", "expected an object of named providers");
   const providers: Record<string, ProviderConfig> = {};
   for (const [name, value] of Object.entries(c.providers)) providers[name] = parseProvider(name, value);
@@ -109,7 +109,7 @@ export function selectProvider(config: Config, name?: string): ProviderConfig {
   const chosen = name ?? config.default ?? (Object.keys(config.providers).length === 1 ? Object.keys(config.providers)[0] : undefined);
   // hasOwn: names such as "constructor" must not resolve to Object.prototype members.
   const provider = chosen !== undefined && Object.hasOwn(config.providers, chosen) ? config.providers[chosen] : undefined;
-  if (!provider) throw new UsageError(`provider: ${chosen === undefined ? "none selected" : `unknown provider ${JSON.stringify(chosen)}`}; pass --provider NAME or set "default" in config.json (see adec providers)`);
+  if (!provider) throw new UsageError(`provider: ${chosen === undefined ? "none selected" : `unknown provider${NAME.test(chosen) ? ` ${JSON.stringify(chosen)}` : ""}`}; pass --provider NAME or set "default" in config.json (see adec providers)`);
   return checkProvider(provider);
 }
 

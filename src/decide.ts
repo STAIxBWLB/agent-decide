@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { findFit, parseFit, temper, type Fit } from "./calibrate.ts";
 import { checkProvider, readKey, type ProviderConfig } from "./config.ts";
-import { parseMinMargin, parseQuestion, topTwo, UsageError, type AskRequest, type Decision, type ProviderAnswer, type Question, type Reason } from "./contract.ts";
+import { parseMinMargin, parseQuestion, topTwo, unknownFields, UsageError, type AskRequest, type Decision, type ProviderAnswer, type Question, type Reason } from "./contract.ts";
 import { ProviderError } from "./providers/http.ts";
 import { askLogits } from "./providers/logits.ts";
 import { askSystemOne } from "./providers/systemone.ts";
@@ -24,7 +24,7 @@ function call(provider: ProviderConfig, key: string | undefined, question: Quest
 function parseAskRequest(raw: AskRequest): { question: Question; state: string; minMargin: number | undefined } {
   if (typeof raw !== "object" || raw === null) throw new UsageError("request: expected an object with question and state");
   const unknown = Object.keys(raw).filter(k => !["question", "state", "pii", "minMargin"].includes(k));
-  if (unknown.length) throw new UsageError(`request: unknown field ${unknown.join(", ")}; allowed fields are question, state, pii, minMargin`);
+  if (unknown.length) throw new UsageError(`request: ${unknownFields(unknown, ["question", "state", "pii", "minMargin"])}`);
   if (typeof raw.state !== "string") throw new UsageError("request.state: give the state as a string");
   if (raw.pii !== undefined && typeof raw.pii !== "boolean") throw new UsageError("request.pii: give true or false");
   return { question: parseQuestion(raw.question), state: raw.state, minMargin: raw.minMargin === undefined ? undefined : parseMinMargin(raw.minMargin) };
@@ -33,7 +33,7 @@ function parseAskRequest(raw: AskRequest): { question: Question; state: string; 
 function checkOptions(options: DecideOptions): void {
   if (typeof options !== "object" || options === null) throw new UsageError("options: give { shadowDir: string | null }");
   const unknown = Object.keys(options).filter(k => !["shadowDir", "key", "fits"].includes(k));
-  if (unknown.length) throw new UsageError(`options: unknown field ${unknown.join(", ")}; allowed fields are shadowDir, key, fits`);
+  if (unknown.length) throw new UsageError(`options: ${unknownFields(unknown, ["shadowDir", "key", "fits"])}`);
   if (options.fits !== undefined) {
     if (!Array.isArray(options.fits)) throw new UsageError("options.fits: give the array returned by loadFits");
     options.fits.forEach(parseFit);

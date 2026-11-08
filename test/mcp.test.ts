@@ -80,11 +80,13 @@ test("AC8: an HTTP error echoing the key never reaches MCP output", async () => 
       { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
       { jsonrpc: "2.0", method: "notifications/initialized" },
       { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "adec_ask", arguments: { question, state: "s" } } },
-      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "nope", arguments: {} } },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "TOOL_SENTINEL", arguments: {} } },
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "adec_models", arguments: { ARG_SENTINEL: 1 } } },
     ]);
     expect(echo.seen).toHaveLength(1);
     expect(JSON.parse(r.find(m => m.id === 2).result.content[0].text)).toMatchObject({ abstain: true, reason: "http" });
     expect(r.find(m => m.id === 3).error.code).toBe(-32602);
-    expect(JSON.stringify(r)).not.toContain(KEY);
+    expect(r.find(m => m.id === 4).result.isError).toBe(true);
+    for (const secret of [KEY, "TOOL_SENTINEL", "ARG_SENTINEL"]) expect(JSON.stringify(r)).not.toContain(secret);
   } finally { echo.stop(); }
 });

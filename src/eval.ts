@@ -1,5 +1,5 @@
 import { checkProvider, type ProviderConfig } from "./config.ts";
-import { parseMinMargin, parseQuestion, topTwo, UsageError, type Question } from "./contract.ts";
+import { parseMinMargin, parseQuestion, topTwo, unknownFields, UsageError, type Question } from "./contract.ts";
 import { decide, type DecideOptions } from "./decide.ts";
 
 export interface EvalRow { state: string; label: string; pii?: boolean }
@@ -15,7 +15,7 @@ export function parseRow(raw: unknown, ids: Set<string>, where: string): EvalRow
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`${where}: expected an object`);
   const r = raw as Record<string, unknown>;
   const unknown = Object.keys(r).filter(k => !["id", "state", "label", "pii"].includes(k));
-  if (unknown.length) throw new UsageError(`${where}: unknown field ${unknown.join(", ")}; allowed fields are id, state, label, pii`);
+  if (unknown.length) throw new UsageError(`${where}: ${unknownFields(unknown, ["id", "state", "label", "pii"])}`);
   if (typeof r.state !== "string") throw new UsageError(`${where}: state must be a string`);
   if (typeof r.label !== "string" || !ids.has(r.label)) throw new UsageError(`${where}: label must be one of the question's option ids`);
   if (r.pii !== undefined && typeof r.pii !== "boolean") throw new UsageError(`${where}: pii must be true or false`);
@@ -82,7 +82,7 @@ export async function evaluate(question: Question, rows: EvalRow[], provider: Pr
   const minMargin = parseMinMargin(options.minMargin);
   provider = checkProvider(provider);
   const unknownOpts = Object.keys(options).filter(k => !["key", "limit", "minMargin"].includes(k));
-  if (unknownOpts.length) throw new UsageError(`eval options: unknown field ${unknownOpts.join(", ")}; allowed fields are key, limit, minMargin`);
+  if (unknownOpts.length) throw new UsageError(`eval options: ${unknownFields(unknownOpts, ["key", "limit", "minMargin"])}`);
   if (options.key !== undefined && typeof options.key !== "function") throw new UsageError("eval options.key: give a function or leave it out");
   const used = options.limit === undefined ? rows : rows.slice(0, options.limit);
   const abstained: Record<string, number> = {};

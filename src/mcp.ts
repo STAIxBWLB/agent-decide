@@ -2,7 +2,7 @@ import { once } from "node:events";
 import type { Readable, Writable } from "node:stream";
 import { loadFits, modelsReport } from "./calibrate.ts";
 import { loadConfig, selectProvider } from "./config.ts";
-import { parseMinMargin, parseQuestion, UsageError } from "./contract.ts";
+import { parseMinMargin, parseQuestion, unknownFields, UsageError } from "./contract.ts";
 import { decide } from "./decide.ts";
 import { loadPolicy } from "./policy.ts";
 import { parseRouteRequest, route } from "./route.ts";
@@ -31,7 +31,7 @@ export const TOOLS = [
 
 function args(raw: Record<string, unknown>, allowed: readonly string[], tool: string): Record<string, unknown> {
   const unknown = Object.keys(raw).filter(k => !allowed.includes(k));
-  if (unknown.length) throw new UsageError(`${tool}: unknown argument ${unknown.join(", ")}; allowed arguments are ${allowed.join(", ") || "none"}`);
+  if (unknown.length) throw new UsageError(`${tool}: ${unknownFields(unknown, allowed, "argument")}`);
   return raw;
 }
 
@@ -94,7 +94,7 @@ export async function serveMcp(home: string, input: Readable | AsyncIterable<Uin
     const params = msg.params;
     if (!plain(params) || typeof params.name !== "string" || (params.arguments !== undefined && !plain(params.arguments))) { await error(id, -32602, "Invalid tool call"); return; }
     const handler = Object.hasOwn(tools, params.name) ? tools[params.name] : undefined;
-    if (!handler) { await error(id, -32602, `unknown tool: ${params.name.slice(0, 64)}`); return; }
+    if (!handler) { await error(id, -32602, "unknown tool; see tools/list"); return; }
     let result: unknown;
     try { result = { content: [{ type: "text", text: JSON.stringify(await handler((params.arguments ?? {}) as Record<string, unknown>)) }] }; }
     catch (failure) {

@@ -1,7 +1,7 @@
 import pkg from "../package.json" with { type: "json" };
 import { loadFits, type Fit } from "./calibrate.ts";
 import { loadConfig, selectProvider, type Config, type ProviderConfig } from "./config.ts";
-import { parseQuestion, UsageError } from "./contract.ts";
+import { fields, parseQuestion, UsageError } from "./contract.ts";
 import { decide } from "./decide.ts";
 import { readBodyBounded } from "./io.ts";
 import { loadPolicies, type Policy } from "./policy.ts";
@@ -29,26 +29,19 @@ async function load(home: string): Promise<Loaded> {
   return { config, policies: await loadPolicies(home, config), fits: await loadFits(home) };
 }
 
-function obj(raw: unknown, allowed: readonly string[], where: string): Record<string, unknown> {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`${where}: expected a JSON object`);
-  const unknown = Object.keys(raw).filter(k => !allowed.includes(k));
-  if (unknown.length) throw new UsageError(`${where}: unknown field ${unknown.map(k => JSON.stringify(k)).join(", ")}; allowed fields are ${allowed.join(", ")}`);
-  return raw as Record<string, unknown>;
-}
-
 const reply = (status: number, body: unknown) => Response.json(body, { status, headers: { "cache-control": "no-store" } });
 const refuse = (status: number, error: string) => reply(status, { error });
 
 /** A System One request with the adec extension, as a D1 ask request. */
 function parseSystemOne(raw: unknown) {
-  const b = obj(raw, ["model", "state", "questions", "adec"], "request");
+  const b = fields(raw, ["model", "state", "questions", "adec"], "request");
   if (b.model !== undefined && typeof b.model !== "string") throw new UsageError("request.model: name a provider from config.json, or leave it out for the default");
   if (typeof b.state !== "string") throw new UsageError("request.state: give the state as a string");
-  const qs = obj(b.questions, ["decision"], "request.questions");
-  const q = obj(qs.decision, ["type", "instructions", "criteria"], "request.questions.decision");
+  const qs = fields(b.questions, ["decision"], "request.questions");
+  const q = fields(qs.decision, ["type", "instructions", "criteria"], "request.questions.decision");
   if (q.type !== "choice") throw new UsageError("request.questions.decision.type: only \"choice\" questions are accepted in this phase");
-  const criteria = obj(q.criteria, Object.keys(q.criteria ?? {}), "request.questions.decision.criteria");
-  const a = obj(b.adec, ["questionId", "pii", "minMargin"], "request.adec");
+  const criteria = fields(q.criteria, Object.keys(q.criteria ?? {}), "request.questions.decision.criteria");
+  const a = fields(b.adec, ["questionId", "pii", "minMargin"], "request.adec");
   const question = parseQuestion({
     questionId: a.questionId, instructions: q.instructions,
     options: Object.entries(criteria).map(([id, d]) => (d === null ? { id } : { id, description: d })),
@@ -61,7 +54,7 @@ function parseSystemOne(raw: unknown) {
  * and refuses browser-shaped requests (an Origin header, a foreign Host) to block DNS rebinding and cross-site posts.
  */
 export async function serve(options: ServeOptions): Promise<ServerHandle> {
-  const o = obj(options, ["home", "port", "host", "log", "key"], "serve options");
+  const o = fields(options, ["home", "port", "host", "log", "key"], "serve options");
   if (typeof o.home !== "string" || !o.home) throw new UsageError("serve options.home: give the ADEC_HOME directory");
   const host = options.host ?? "127.0.0.1";
   if (!LOOPBACK_HOSTS.includes(host)) throw new UsageError(`serve: --host must be 127.0.0.1 or ::1; the server has no authentication, so it never binds ${host}`);

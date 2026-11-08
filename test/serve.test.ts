@@ -86,10 +86,14 @@ test("AC8: no key, state, evidence, instructions or option description in respon
     await add(post(`${s.url}/v1/systemone`, systemOneBody("STATE-SENTINEL", "Bad Id")));
     await add(post(`${s.url}/v1/route`, { policyId: "test.chat", turnId: "TURN-SENTINEL", evidence: "EVIDENCE-SENTINEL", constraints: { contextTokens: 1 } }));
     await add(post(`${s.url}/v1/route`, { policyId: "test.chat", evidence: "EVIDENCE-SENTINEL", constraints: { contextTokens: "EVIDENCE-SENTINEL" } }));
+    // Caller-sent names that fail validation are not echoed: an unknown provider and unknown field names.
+    await add(post(`${s.url}/v1/systemone`, { ...systemOneBody("x"), model: "MODEL_SENTINEL" }));
+    await add(post(`${s.url}/v1/route`, { policyId: "test.chat", evidence: "", constraints: { contextTokens: 1 }, FIELD_SENTINEL: 1 }));
+    await add(post(`${s.url}/v1/systemone`, { ...systemOneBody("x"), adec: { questionId: question.questionId, FIELD_SENTINEL: 1 } }));
     expect(fake.seen.length).toBeGreaterThan(0);
     const shadow = join(dir, "shadow");
     texts.push(...readdirSync(shadow).map(f => readFileSync(join(shadow, f), "utf8")));
-    for (const t of texts) for (const secret of [KEY, "STATE-SENTINEL", "EVIDENCE-SENTINEL", "TURN-SENTINEL", "INSTRUCTIONS-SENTINEL", "DESCRIPTION-SENTINEL"]) expect(t).not.toContain(secret);
+    for (const t of texts) for (const secret of [KEY, "STATE-SENTINEL", "EVIDENCE-SENTINEL", "TURN-SENTINEL", "INSTRUCTIONS-SENTINEL", "DESCRIPTION-SENTINEL", "MODEL_SENTINEL", "FIELD_SENTINEL"]) expect(t).not.toContain(secret);
     expect(texts[0]).toContain("HTTP 401");
   } finally { s.stop(); fake.stop(); }
 });

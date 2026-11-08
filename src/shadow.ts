@@ -95,7 +95,12 @@ export async function labelOutcome(dir: string, id: string, label: string, at = 
 export interface QuestionReport { questionId: string; decisions: number; abstained: Record<string, number>; labelled: number; agreed: number; agreement: number | null }
 
 /** Per-question counts; the latest outcome for a decision wins; agreement counts labelled decisions with a choice. */
+function checkDir(dir: unknown, what: string): void {
+  if (typeof dir !== "string" || !dir) throw new UsageError(`${what}: give the shadow directory (shadowDir of ADEC_HOME)`);
+}
+
 export async function shadowReport(dir: string): Promise<QuestionReport[]> {
+  checkDir(dir, "shadowReport");
   const rows = await readRecords(dir);
   const outcomes = new Map<string, string>();
   for (const r of rows) if (r.kind === "outcome") outcomes.set(r.id, r.label);
@@ -123,6 +128,7 @@ export interface PolicyReport {
 
 /** Per-policy route counts; the latest outcome for a route wins. */
 export async function routeReport(dir: string): Promise<PolicyReport[]> {
+  checkDir(dir, "routeReport");
   const rows = await readRecords(dir);
   const outcomes = new Map<string, string>();
   for (const r of rows) if (r.kind === "outcome") outcomes.set(r.id, r.label);

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { checkProvider, type ProviderConfig } from "./config.ts";
-import { UsageError, type Decider, type Question, type Reason } from "./contract.ts";
+import { fields, UsageError, type Decider, type Question, type Reason } from "./contract.ts";
 import { decide, type DecideOptions } from "./decide.ts";
 import { pairsOf, parsePair, parsePolicy, POLICY_ID, type Pair, type Policy } from "./policy.ts";
 import { appendRoute } from "./shadow.ts";
@@ -46,19 +46,12 @@ export class PinStore {
   }
 }
 
-function obj(raw: unknown, allowed: readonly string[], where: string): Record<string, unknown> {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`${where}: expected a JSON object`);
-  const unknown = Object.keys(raw).filter(k => !allowed.includes(k));
-  if (unknown.length) throw new UsageError(`${where}: unknown field ${unknown.map(k => JSON.stringify(k)).join(", ")}; allowed fields are ${allowed.join(", ")}`);
-  return raw as Record<string, unknown>;
-}
-
 export function parseRouteRequest(raw: unknown): RouteRequest {
-  const r = obj(raw, ["policyId", "turnId", "evidence", "constraints", "candidates"], "route request");
+  const r = fields(raw, ["policyId", "turnId", "evidence", "constraints", "candidates"], "route request");
   if (typeof r.policyId !== "string" || !POLICY_ID.test(r.policyId)) throw new UsageError("route request.policyId: name a policy file in ADEC_HOME/policies");
   if (r.turnId !== undefined && (typeof r.turnId !== "string" || !TURN_ID.test(r.turnId))) throw new UsageError("route request.turnId: use 1-128 characters of A-Z, a-z, 0-9, '.', '_', ':' or '-'");
   if (typeof r.evidence !== "string") throw new UsageError("route request.evidence: give the bounded evidence as a string");
-  const c = obj(r.constraints, ["contextTokens", "pii", "private", "explicit", "current"], "route request.constraints");
+  const c = fields(r.constraints, ["contextTokens", "pii", "private", "explicit", "current"], "route request.constraints");
   if (typeof c.contextTokens !== "number" || !Number.isInteger(c.contextTokens) || c.contextTokens < 0) throw new UsageError("route request.constraints.contextTokens: give the turn's context size as a non-negative integer");
   for (const k of ["pii", "private"] as const) if (c[k] !== undefined && typeof c[k] !== "boolean") throw new UsageError(`route request.constraints.${k}: give true or false`);
   let candidates: string[] | undefined;
@@ -80,7 +73,7 @@ export function parseRouteRequest(raw: unknown): RouteRequest {
 export interface RouteOptions extends Pick<DecideOptions, "key"> { shadowDir: string | null; pins?: PinStore }
 
 function checkOptions(options: RouteOptions): void {
-  const o = obj(options, ["shadowDir", "key", "pins"], "route options");
+  const o = fields(options, ["shadowDir", "key", "pins"], "route options");
   if (o.shadowDir !== null && (typeof o.shadowDir !== "string" || !o.shadowDir)) throw new UsageError("route options.shadowDir: give a directory path, or null to write no shadow record");
   if (o.key !== undefined && typeof o.key !== "function") throw new UsageError("route options.key: give a function or leave it out");
   if (o.pins !== undefined && !(o.pins instanceof PinStore)) throw new UsageError("route options.pins: pins are kept by adec serve; leave it out");

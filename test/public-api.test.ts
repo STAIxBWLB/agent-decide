@@ -56,6 +56,10 @@ test("public entry points validate their inputs like the CLI, before any request
     ["serve host", () => api.serve({ home: tempDir(), host: "0.0.0.0", port: 0 })],
     ["serve options", () => api.serve({ home: tempDir(), port: 0, extra: 1 } as never)],
     ["labelOutcome label", () => api.labelOutcome(tempDir(), "a".repeat(32), 5 as never)],
+    ["parsePolicy config", async () => api.parsePolicy(policy, { providers: { fake: { ...good, name: "fake", model: "latest" } } })],
+    ["parsePolicy config shape", async () => api.parsePolicy(policy, {} as never)],
+    ["routeReport dir", () => api.routeReport("")],
+    ["shadowReport dir", () => api.shadowReport("")],
   ];
   try {
     for (const [name, run] of cases) {

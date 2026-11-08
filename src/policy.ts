@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { Config } from "./config.ts";
-import { MAX_DESCRIPTION, MAX_INSTRUCTIONS, MAX_OPTIONS, UsageError } from "./contract.ts";
+import { checkProvider, type Config } from "./config.ts";
+import { fields, MAX_DESCRIPTION, MAX_INSTRUCTIONS, MAX_OPTIONS, UsageError } from "./contract.ts";
 import { readJsonBounded } from "./io.ts";
 
 /** A routing policy file, $ADEC_HOME/policies/<policyId>.json (spec #4). Candidates are ordered cheapest first. */
@@ -18,15 +18,8 @@ const ALIAS = /^[a-z0-9][a-z0-9._/:-]{0,63}$/, EFFORT = /^[a-z0-9][a-z0-9_-]{0,1
 const POLICY_BYTES = 64 * 1024;
 const MAX_CANDIDATE_DESCRIPTION = MAX_DESCRIPTION - 100; // room for "; model <alias>, effort <effort>" in the option description
 
-function obj(raw: unknown, allowed: readonly string[], where: string): Record<string, unknown> {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`${where}: expected a JSON object`);
-  const unknown = Object.keys(raw).filter(k => !allowed.includes(k));
-  if (unknown.length) throw new UsageError(`${where}: unknown field ${unknown.map(k => JSON.stringify(k)).join(", ")}; allowed fields are ${allowed.join(", ")}`);
-  return raw as Record<string, unknown>;
-}
-
 export function parsePair(raw: unknown, where: string): Pair {
-  const p = obj(raw, ["alias", "effort"], where);
+  const p = fields(raw, ["alias", "effort"], where);
   if (typeof p.alias !== "string" || !ALIAS.test(p.alias)) throw new UsageError(`${where}.alias: use 1-64 characters of a-z, 0-9, '.', '_', '/', ':' or '-', starting with a letter or digit`);
   if (typeof p.effort !== "string" || !EFFORT.test(p.effort)) throw new UsageError(`${where}.effort: use 1-16 characters of a-z, 0-9, '_' or '-', starting with a letter or digit`);
   return { alias: p.alias, effort: p.effort };
@@ -39,18 +32,22 @@ export function pairsOf(policy: Policy): (Pair & { rank: number; onPrem: boolean
 
 /** Validate a policy; with a configuration, its provider must be configured. */
 export function parsePolicy(raw: unknown, config?: Config): Policy {
-  const p = obj(raw, ["policyId", "provider", "instructions", "candidates", "default", "contextLimit", "minMargin"], "policy");
+  const p = fields(raw, ["policyId", "provider", "instructions", "candidates", "default", "contextLimit", "minMargin"], "policy");
   if (typeof p.policyId !== "string" || !POLICY_ID.test(p.policyId)) throw new UsageError("policy.policyId: use 1-50 characters of a-z, 0-9, '.', '_' or '-', starting with a letter or digit");
   const where = `policy ${p.policyId}`;
   if (typeof p.provider !== "string" || !PROVIDER.test(p.provider)) throw new UsageError(`${where}.provider: name a provider from config.json`);
-  if (config && !Object.hasOwn(config.providers, p.provider)) throw new UsageError(`${where}.provider: ${JSON.stringify(p.provider)} is not in config.json; see adec providers`);
+  if (config !== undefined) {
+    if (typeof config !== "object" || config === null || typeof config.providers !== "object" || config.providers === null) throw new UsageError("parsePolicy config: give the configuration returned by loadConfig or parseConfig");
+    if (!Object.hasOwn(config.providers, p.provider)) throw new UsageError(`${where}.provider: ${JSON.stringify(p.provider)} is not in config.json; see adec providers`);
+    checkProvider(config.providers[p.provider]!);
+  }
   if (typeof p.instructions !== "string" || !p.instructions.trim() || p.instructions.length > MAX_INSTRUCTIONS)
     throw new UsageError(`${where}.instructions: give a non-empty string of at most ${MAX_INSTRUCTIONS} characters`);
   if (!Array.isArray(p.candidates) || !p.candidates.length) throw new UsageError(`${where}.candidates: list at least one candidate, cheapest first`);
   const seen = new Set<string>();
   const candidates: Candidate[] = p.candidates.map((rawC, i) => {
     const at = `${where}.candidates[${i}]`;
-    const c = obj(rawC, ["alias", "efforts", "onPrem", "ctxMax", "description", "costEstimate"], at);
+    const c = fields(rawC, ["alias", "efforts", "onPrem", "ctxMax", "description", "costEstimate"], at);
     const efforts = Array.isArray(c.efforts) ? c.efforts : [];
     if (!efforts.length) throw new UsageError(`${at}.efforts: list at least one effort`);
     efforts.forEach((e, j) => parsePair({ alias: c.alias, effort: e }, `${at}.efforts[${j}]`));

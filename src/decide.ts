@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { readKey, type ProviderConfig } from "./config.ts";
+import { checkProvider, readKey, type ProviderConfig } from "./config.ts";
 import { parseMinMargin, parseQuestion, topTwo, UsageError, type AskRequest, type Decision, type ProviderAnswer, type Question, type Reason } from "./contract.ts";
 import { ProviderError } from "./providers/http.ts";
 import { askLogits } from "./providers/logits.ts";
@@ -44,6 +44,7 @@ function checkAnswer(provider: ProviderConfig, question: Question, answer: Provi
  */
 export async function decide(request: AskRequest, provider: ProviderConfig, options: DecideOptions): Promise<Decision & { error?: string }> {
   const { question, state, minMargin } = parseAskRequest(request);
+  provider = checkProvider(provider);
   const id = randomBytes(16).toString("hex");
   const started = performance.now();
   let answer: ProviderAnswer | undefined, reason: Reason = "ok", error: string | undefined;

@@ -1,4 +1,4 @@
-import type { ProviderConfig } from "./config.ts";
+import { checkProvider, type ProviderConfig } from "./config.ts";
 import { parseMinMargin, parseQuestion, topTwo, UsageError, type Question } from "./contract.ts";
 import { decide, type DecideOptions } from "./decide.ts";
 
@@ -74,6 +74,7 @@ export async function evaluate(question: Question, rows: EvalRow[], provider: Pr
   rows = rows.map((r, i) => parseRow(r, ids, `rows[${i}]`));
   if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1)) throw new UsageError("eval: limit must be a positive integer");
   const minMargin = parseMinMargin(options.minMargin);
+  provider = checkProvider(provider);
   const used = options.limit === undefined ? rows : rows.slice(0, options.limit);
   const abstained: Record<string, number> = {};
   const latencies: number[] = [], pairs: { predicted: string; label: string }[] = [], calibration: { confidence: number; correct: boolean }[] = [];

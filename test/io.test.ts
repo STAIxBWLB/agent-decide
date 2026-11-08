@@ -15,3 +15,14 @@ test("review r2: the bound is enforced on bytes read, and directories are refuse
   writeFileSync(f, "한글");
   expect(await readTextBounded(f, 6, "t")).toBe("한글");
 });
+
+test("review r4: a FIFO without a writer is refused instead of blocking", async () => {
+  if (process.platform === "win32") return;
+  const fifo = join(tempDir(), "pipe");
+  expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
+  const result = await Promise.race([
+    readTextBounded(fifo, 100, "t").then(() => "read", e => (e instanceof UsageError ? "usage" : "other")),
+    Bun.sleep(1000).then(() => "blocked"),
+  ]);
+  expect(result).toBe("usage");
+});

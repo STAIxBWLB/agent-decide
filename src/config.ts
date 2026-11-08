@@ -69,6 +69,14 @@ export function parseProvider(name: string, raw: unknown): ProviderConfig {
   };
 }
 
+/** Re-validate a provider object handed to a library entry point, with the same rules as config.json. */
+export function checkProvider(provider: ProviderConfig): ProviderConfig {
+  if (typeof provider !== "object" || provider === null) throw new UsageError("provider: expected a provider object; build it with parseProvider or loadConfig");
+  const { name, ...rest } = provider;
+  if (typeof name !== "string") throw new UsageError("provider.name: give the provider name as a string");
+  return parseProvider(name, rest);
+}
+
 export function parseConfig(raw: unknown): Config {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("file", "expected a JSON object with \"providers\"");
   const c = raw as Record<string, unknown>;

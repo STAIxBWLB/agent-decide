@@ -1,3 +1,4 @@
+import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { UsageError } from "./contract.ts";
 
@@ -7,7 +8,8 @@ import { UsageError } from "./contract.ts";
  */
 export async function readTextBounded(path: string, max: number, what: string): Promise<string> {
   let handle;
-  try { handle = await open(path, "r"); } catch { throw new UsageError(`${what}: cannot read ${path}; check that the file exists and is readable`); }
+  // O_NONBLOCK: opening a FIFO without a writer must not block before the regular-file check.
+  try { handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK); } catch { throw new UsageError(`${what}: cannot read ${path}; check that the file exists and is readable`); }
   try {
     if (!(await handle.stat()).isFile()) throw new UsageError(`${what}: ${path} is not a regular file`);
     const chunks: Buffer[] = [];

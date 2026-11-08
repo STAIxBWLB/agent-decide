@@ -43,7 +43,12 @@ export async function appendDecision(dir: string, question: Question, decision: 
 
 export async function readRecords(dir: string): Promise<(DecisionRecord | OutcomeRecord)[]> {
   let files: string[];
-  try { files = (await readdir(dir)).filter(f => /^\d{4}-\d{2}\.jsonl$/.test(f)).sort(); } catch { return []; }
+  try { files = (await readdir(dir)).filter(f => /^\d{4}-\d{2}\.jsonl$/.test(f)).sort(); }
+  catch (e) {
+    // Only "no log yet" is an empty history; anything else must not look like "no records".
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new UsageError(`shadow log: cannot read ${dir} (${(e as NodeJS.ErrnoException).code ?? "error"}); check that it is a directory you can read, or set ADEC_HOME`);
+  }
   const rows: (DecisionRecord | OutcomeRecord)[] = [];
   for (const f of files) {
     const text = await readTextBounded(join(dir, f), FILE_BYTES, "shadow log");

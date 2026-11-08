@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import * as api from "../src/index.ts";
 import { fakeServer, provider, question, systemOneAnswer, tempDir } from "./fakes.ts";
 
@@ -24,6 +26,10 @@ test("public entry points validate their inputs like the CLI, before any request
     ["selectProvider name", async () => api.selectProvider({ providers: {} }, "constructor")],
     ["parseProvider", async () => api.parseProvider("p", { kind: "logits" })],
     ["parseQuestion", async () => api.parseQuestion({})],
+    ["decide options missing shadowDir", () => api.decide({ question, state: "s" }, good, {} as never)],
+    ["decide options unknown", () => api.decide({ question, state: "s" }, good, { shadowDir: null, extra: 1 } as never)],
+    ["evaluate options unknown", () => api.evaluate(question, [{ state: "s", label: "plan" }], good, { shadowDir: "/tmp" } as never)],
+    ["shadowReport unreadable", async () => { const f = join(tempDir(), "file"); writeFileSync(f, "x"); return api.shadowReport(f); }],
     ["parseRows question", async () => api.parseRows("", { ...question, options: [] })],
     ["selectProvider config", async () => api.selectProvider({ providers: { p: { ...good, model: "latest" } } }, "p")],
     ["selectProvider http", async () => api.selectProvider({ providers: { p: { ...good, onPrem: false, endpoint: "http://203.0.113.5" } } }, "p")],

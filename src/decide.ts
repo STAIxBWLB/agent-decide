@@ -27,6 +27,14 @@ function parseAskRequest(raw: AskRequest): { question: Question; state: string; 
   return { question: parseQuestion(raw.question), state: raw.state, minMargin: parseMinMargin(raw.minMargin) };
 }
 
+function checkOptions(options: DecideOptions): void {
+  if (typeof options !== "object" || options === null) throw new UsageError("options: give { shadowDir: string | null }");
+  const unknown = Object.keys(options).filter(k => k !== "shadowDir" && k !== "key");
+  if (unknown.length) throw new UsageError(`options: unknown field ${unknown.join(", ")}; allowed fields are shadowDir, key`);
+  if (options.shadowDir !== null && (typeof options.shadowDir !== "string" || !options.shadowDir)) throw new UsageError("options.shadowDir: give a directory path, or null to write no shadow record");
+  if (options.key !== undefined && typeof options.key !== "function") throw new UsageError("options.key: give a function or leave it out");
+}
+
 /** One invariant for every provider: probabilities are finite, in [0, 1], cover exactly the options and sum to 1. */
 function checkAnswer(provider: ProviderConfig, question: Question, answer: ProviderAnswer): ProviderAnswer {
   const ids = question.options.map(o => o.id), probs = answer.probabilities;
@@ -45,6 +53,7 @@ function checkAnswer(provider: ProviderConfig, question: Question, answer: Provi
 export async function decide(request: AskRequest, provider: ProviderConfig, options: DecideOptions): Promise<Decision & { error?: string }> {
   const { question, state, minMargin } = parseAskRequest(request);
   provider = checkProvider(provider);
+  checkOptions(options);
   const id = randomBytes(16).toString("hex");
   const started = performance.now();
   let answer: ProviderAnswer | undefined, reason: Reason = "ok", error: string | undefined;

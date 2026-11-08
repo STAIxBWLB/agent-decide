@@ -76,6 +76,9 @@ export async function evaluate(question: Question, rows: EvalRow[], provider: Pr
   if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1)) throw new UsageError("eval: limit must be a positive integer");
   const minMargin = parseMinMargin(options.minMargin);
   provider = checkProvider(provider);
+  const unknownOpts = Object.keys(options).filter(k => !["key", "limit", "minMargin"].includes(k));
+  if (unknownOpts.length) throw new UsageError(`eval options: unknown field ${unknownOpts.join(", ")}; allowed fields are key, limit, minMargin`);
+  if (options.key !== undefined && typeof options.key !== "function") throw new UsageError("eval options.key: give a function or leave it out");
   const used = options.limit === undefined ? rows : rows.slice(0, options.limit);
   const abstained: Record<string, number> = {};
   const latencies: number[] = [], pairs: { predicted: string; label: string }[] = [], calibration: { confidence: number; correct: boolean }[] = [];

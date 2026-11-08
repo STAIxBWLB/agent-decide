@@ -98,8 +98,11 @@ const num = (v: unknown, min: number, max: number) => typeof v === "number" && N
 /** Validate one fit record (a fits.jsonl line or a library caller's object). */
 export function parseFit(raw: unknown): Fit {
   const f = raw as Fit;
-  const split = (m: unknown) => { const s = m as SplitMetrics; return typeof m === "object" && m !== null && Number.isInteger(s.n) && num(s.accuracy, 0, 1) && num(s.coverage, 0, 1) && (s.selectiveAccuracy === null || num(s.selectiveAccuracy, 0, 1)) && num(s.ece, 0, 1) && num(s.brier, 0, 2); };
-  const ok = typeof raw === "object" && raw !== null && f.v === 1 && f.method === "temperature"
+  // Closed objects: a record with fields adec does not write is foreign, never a live fit.
+  const closed = (o: unknown, allowed: readonly string[]) => typeof o === "object" && o !== null && !Array.isArray(o) && Object.keys(o).every(k => allowed.includes(k));
+  const split = (m: unknown) => { const s = m as SplitMetrics; return closed(m, ["n", "accuracy", "coverage", "selectiveAccuracy", "ece", "brier"]) && Number.isInteger(s.n) && num(s.accuracy, 0, 1) && num(s.coverage, 0, 1) && (s.selectiveAccuracy === null || num(s.selectiveAccuracy, 0, 1)) && num(s.ece, 0, 1) && num(s.brier, 0, 2); };
+  const ok = closed(raw, ["v", "questionId", "provider", "kind", "model", "version", "endpointSha256", "method", "temperature", "minMargin", "targetAccuracy", "fittedAt", "n", "setSha256", "metrics"])
+    && closed(f.metrics, ["raw", "calibrated"]) && f.v === 1 && f.method === "temperature"
     && typeof f.questionId === "string" && typeof f.provider === "string" && typeof f.kind === "string" && typeof f.model === "string"
     && (f.version === undefined || typeof f.version === "string") && typeof f.endpointSha256 === "string" && /^[0-9a-f]{64}$/.test(f.endpointSha256)
     && num(f.temperature, T_MIN, T_MAX) && num(f.minMargin, 0, 1) && num(f.targetAccuracy, 0, 1) && typeof f.fittedAt === "string" && !Number.isNaN(Date.parse(f.fittedAt))
@@ -127,9 +130,9 @@ export async function loadFits(home: string): Promise<Fit[]> {
 }
 
 export async function appendFit(home: string, fit: Fit): Promise<void> {
-  const file = fitsFile(home);
+  const line = `${JSON.stringify(parseFit(fit))}\n`; // validate before any write
   await mkdir(join(home, "calibration"), { recursive: true, mode: 0o700 });
-  await appendFile(file, `${JSON.stringify(parseFit(fit))}\n`, { mode: 0o600 });
+  await appendFile(fitsFile(home), line, { mode: 0o600 });
 }
 
 export function parseTargetAccuracy(raw: unknown): number {

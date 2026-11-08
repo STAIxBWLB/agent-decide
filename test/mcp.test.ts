@@ -25,8 +25,8 @@ test("AC9: initialize, tools/list and each tool over a spawned adec mcp; invalid
   const bad = { ...question, options: [{ id: "only" }] };
   writeFileSync(join(home, "bad.json"), JSON.stringify(bad));
   mkdirSync(join(home, "policies"));
-  writeFileSync(join(home, "policies", "chat.json"), JSON.stringify({ policyId: "chat", provider: "fake", instructions: "Pick.",
-    candidates: [{ alias: "fast", efforts: ["low"], onPrem: true }, { alias: "big", efforts: ["high"], onPrem: true }], default: { alias: "big", effort: "high" } }));
+  writeFileSync(join(home, "policies", "chat.json"), JSON.stringify({ policyId: "chat", provider: "fake", instructions: "INSTRUCTIONS-SENTINEL pick.",
+    candidates: [{ alias: "fast", efforts: ["low"], onPrem: true, description: "DESCRIPTION-SENTINEL" }, { alias: "big", efforts: ["high"], onPrem: true }], default: { alias: "big", effort: "high" } }));
   try {
     const call = (id: number, name: string, args: unknown) => ({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
     const r = await session(home, [
@@ -39,7 +39,7 @@ test("AC9: initialize, tools/list and each tool over a spawned adec mcp; invalid
       call(6, "adec_shadow_report", {}),
       call(7, "adec_route", { request: { policyId: "missing", evidence: "", constraints: { contextTokens: 0 } } }),
       call(8, "adec_shadow_label", { id: "x", label: "y" }),
-      call(9, "adec_route", { request: { policyId: "chat", evidence: "e", constraints: { contextTokens: 1 } } }),
+      call(9, "adec_route", { request: { policyId: "chat", turnId: "TURN-SENTINEL", evidence: "EVIDENCE-SENTINEL", constraints: { contextTokens: 1 } } }),
     ]);
     const by = new Map(r.map(m => [m.id, m]));
     expect(by.get(1).result.serverInfo.name).toBe("adec");
@@ -65,7 +65,10 @@ test("AC9: initialize, tools/list and each tool over a spawned adec mcp; invalid
     expect(JSON.parse(labelled.find(m => m.id === 2).result.content[0].text)).toMatchObject({ kind: "outcome", label: "completed" });
     expect(JSON.parse(labelled.find(m => m.id === 3).result.content[0].text).policies[0]).toMatchObject({ policyId: "chat", outcomes: { completed: 1 } });
     for (const m of r) expect(JSON.stringify(m)).not.toContain(KEY);
-    expect(JSON.stringify(r)).not.toContain("STATE-SENTINEL");
+    for (const secret of ["STATE-SENTINEL", "EVIDENCE-SENTINEL", "TURN-SENTINEL", "INSTRUCTIONS-SENTINEL", "DESCRIPTION-SENTINEL"]) {
+      expect(JSON.stringify(r)).not.toContain(secret);
+      expect(JSON.stringify(labelled)).not.toContain(secret);
+    }
   } finally { ok.stop(); }
 });
 
@@ -89,4 +92,13 @@ test("AC8: an HTTP error echoing the key never reaches MCP output", async () => 
     expect(r.find(m => m.id === 4).result.isError).toBe(true);
     for (const secret of [KEY, "TOOL_SENTINEL", "ARG_SENTINEL"]) expect(JSON.stringify(r)).not.toContain(secret);
   } finally { echo.stop(); }
+});
+
+test("a truncated UTF-8 sequence at EOF is a JSON-RPC parse error, not a crash", async () => {
+  const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "bin", "adec.js"), "mcp"], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...process.env, ADEC_HOME: tempDir() } });
+  proc.stdin.write(new Uint8Array([0x7b, 0xea, 0xb0]));
+  await proc.stdin.end();
+  const out = await new Response(proc.stdout).text();
+  expect(await proc.exited).toBe(0);
+  expect(JSON.parse(out.trim()).error.code).toBe(-32700);
 });

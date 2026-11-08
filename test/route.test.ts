@@ -51,7 +51,7 @@ test("AC1: with an on-prem decider, off-prem candidates are not even offered; an
     expect(r).toMatchObject({ alias: "fast", effort: "medium", reason: "ok" });
     expect(optionsSent(fake.seen[0]!.body).every(d => d.includes("model fast"))).toBe(true);
     const explicit = await route({ ...base, constraints: { contextTokens: 1000, pii: true, explicit: { alias: "gpt-5.5", effort: "high" } } }, policy, p, { shadowDir: null, ...noKey });
-    expect(explicit).toMatchObject({ alias: null, effort: null, reason: "no_candidate", abstain: true });
+    expect(explicit).toMatchObject({ alias: null, effort: null, reason: "no_candidate", abstain: true, rules: ["onprem_only", "no_candidate"] });
     expect(fake.seen).toHaveLength(1);
   } finally { fake.stop(); }
 });
@@ -61,7 +61,7 @@ test("AC2: explicit wins without a question; an explicit pair outside the policy
   try {
     const p = provider(fake.url);
     const r = await route({ ...base, constraints: { contextTokens: 900_000, explicit: { alias: "gpt-5.5", effort: "high" } } }, policy, p, { shadowDir: null, ...noKey });
-    expect(r).toMatchObject({ alias: "gpt-5.5", effort: "high", reason: "explicit", abstain: false, decider: null, estimatedCost: 1 });
+    expect(r).toMatchObject({ alias: "gpt-5.5", effort: "high", reason: "explicit", abstain: false, decider: null, estimatedCost: 1, rules: ["explicit"] });
     await expect(route({ ...base, constraints: { contextTokens: 1, explicit: { alias: "gpt-5.5", effort: "low" } } }, policy, p, { shadowDir: null, ...noKey })).rejects.toThrow(UsageError);
     await expect(route({ ...base, candidates: ["fast"], constraints: { contextTokens: 1, explicit: { alias: "gpt-5.5", effort: "high" } } }, policy, p, { shadowDir: null, ...noKey })).rejects.toThrow(UsageError);
     expect(fake.seen).toHaveLength(0);
@@ -80,12 +80,12 @@ test("AC2: no downgrade above the context limit, ctx_max, no_candidate and singl
     await route({ ...base, constraints: { contextTokens: 10_000, current } }, policy, p, o);
     expect(optionsSent(fake.seen[1]!.body)).toHaveLength(4);
     const none = await route({ ...base, constraints: { contextTokens: 250_000, current } }, policy, p, o);
-    expect(none).toMatchObject({ alias: null, reason: "no_candidate", rules: ["no_downgrade", "ctx_max"] });
+    expect(none).toMatchObject({ alias: null, reason: "no_candidate", rules: ["no_downgrade", "ctx_max", "no_candidate"] });
     const small = await route({ ...base, constraints: { contextTokens: 250_000 } }, policy, p, o);
     expect(small.rules).toEqual(["ctx_max"]);
     const single = parsePolicy({ ...POLICY, candidates: [{ ...POLICY.candidates[0]!, efforts: ["low"] }, POLICY.candidates[1]!], default: { alias: "fast", effort: "low" } });
     const one = await route({ ...base, constraints: { contextTokens: 1, pii: true } }, single, p, o);
-    expect(one).toMatchObject({ alias: "fast", effort: "low", reason: "single", decider: null, rules: ["onprem_only"] });
+    expect(one).toMatchObject({ alias: "fast", effort: "low", reason: "single", decider: null, rules: ["onprem_only", "single"] });
     expect(fake.seen).toHaveLength(3);
   } finally { fake.stop(); }
 });
@@ -125,7 +125,7 @@ test("AC4: a pin is reused within the TTL, re-decided after it or when a rule br
     const turn = { ...base, turnId: "turn-SECRET-42" };
     expect(await route(turn, policy, p, o)).toMatchObject({ alias: "gpt-5.5", effort: "high", pinned: false });
     now += 10 * 60_000;
-    expect(await route(turn, policy, p, o)).toMatchObject({ alias: "gpt-5.5", effort: "high", pinned: true, reason: "pinned" });
+    expect(await route(turn, policy, p, o)).toMatchObject({ alias: "gpt-5.5", effort: "high", pinned: true, reason: "pinned", rules: ["pinned"] });
     expect(fake.seen).toHaveLength(1);
     // A PII turn removes the off-prem pin: decided again among on-prem pairs.
     const broken = await route({ ...turn, constraints: { contextTokens: 1000, pii: true } }, policy, p, o);

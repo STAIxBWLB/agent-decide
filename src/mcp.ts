@@ -123,6 +123,9 @@ export async function serveMcp(home: string, input: Readable | AsyncIterable<Uin
   try {
     for await (const chunk of input) await consume(typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true }));
   } catch { await error(null, -32700, "Invalid UTF-8 input"); return; }
-  await consume(decoder.decode());
+  // The final flush can throw too: a truncated multibyte sequence at EOF.
+  let tail: string;
+  try { tail = decoder.decode(); } catch { await error(null, -32700, "Invalid UTF-8 input"); return; }
+  await consume(tail);
   if (pending.trim() || overflow) await error(null, -32700, "Incomplete request at EOF");
 }

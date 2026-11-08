@@ -14,7 +14,8 @@ export interface RouteRequest {
   candidates?: string[];
 }
 export type RouteReason = Reason | "explicit" | "pinned" | "single" | "no_candidate";
-export type RouteRule = "onprem_only" | "no_downgrade" | "ctx_max" | "pin_broken";
+/** Every rule that filtered the pairs or decided the answer, in the order applied. */
+export type RouteRule = "onprem_only" | "explicit" | "no_downgrade" | "ctx_max" | "no_candidate" | "pin_broken" | "pinned" | "single";
 export interface RouteDecision {
   id: string; policyId: string; alias: string | null; effort: string | null; margin: number; abstain: boolean;
   reason: RouteReason; fallbackApplied: boolean; pinned: boolean; rules: RouteRule[];
@@ -98,6 +99,7 @@ export async function route(request: RouteRequest, policy: Policy, provider: Pro
 
   const finish = async (pick: Pair | null, reason: RouteReason, extra: { margin?: number; fallbackApplied?: boolean; pinned?: boolean; decider?: Decider | null; error?: string } = {}): Promise<RouteDecision> => {
     const fallbackApplied = extra.fallbackApplied ?? false, pinned = extra.pinned ?? false;
+    if (reason === "explicit" || reason === "no_candidate" || reason === "pinned" || reason === "single") rules.push(reason);
     const cost = pick ? policy.candidates.find(k => k.alias === pick.alias)?.costEstimate : undefined;
     const d: RouteDecision = {
       id, policyId: policy.policyId, alias: pick?.alias ?? null, effort: pick?.effort ?? null, margin: extra.margin ?? 0,

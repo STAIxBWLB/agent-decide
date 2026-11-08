@@ -122,6 +122,14 @@ test("review: a fit threshold of 1 always abstains, even on a certain answer; an
     try { await expect(loadFits(home)).rejects.toThrow(UsageError); }
     finally { chmodSync(join(home, "calibration", "fits.jsonl"), 0o600); }
     expect(await loadFits(tempDir())).toEqual([]);
+    // Unknown fields make a record foreign: refused by appendFit (before any write) and skipped by loadFits.
+    const extra = { ...fits[0]!, extra: 1 } as never;
+    const empty = tempDir();
+    await expect(appendFit(empty, extra)).rejects.toThrow(UsageError);
+    expect(existsSync(join(empty, "calibration"))).toBe(false);
+    await expect(appendFit(empty, { ...fits[0]!, metrics: { ...fits[0]!.metrics, raw: { ...fits[0]!.metrics.raw, x: 1 } } } as never)).rejects.toThrow(UsageError);
+    writeFileSync(join(home, "calibration", "fits.jsonl"), `${JSON.stringify(extra)}\n`);
+    expect(await loadFits(home)).toEqual([]);
   } finally { fake.stop(); }
 });
 

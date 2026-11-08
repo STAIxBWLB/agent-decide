@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { UsageError } from "./contract.ts";
+import { unknownFields, UsageError } from "./contract.ts";
 import { readJsonBounded, readTextBounded } from "./io.ts";
 
 export type ProviderKind = "systemone" | "logits";
@@ -9,6 +9,10 @@ export interface ProviderConfig {
   kind: ProviderKind;
   endpoint: string;
   model: string;
+  /** Pinned model version; with model, kind and endpoint it keys a calibration fit. */
+  version?: string;
+  /** sha256 of local weights, for the registry view. */
+  sha256?: string;
   keyFile?: string;
   onPrem: boolean;
   timeoutMs: number;
@@ -36,18 +40,24 @@ function integer(raw: unknown, fallback: number, min: number, max: number, where
   return raw;
 }
 
+function pinned(v: unknown): v is string {
+  return typeof v === "string" && !!v.trim() && v !== "latest" && !v.endsWith("-latest");
+}
+
 export function parseProvider(name: string, raw: unknown): ProviderConfig {
   const where = `providers.${name}`;
   if (!NAME.test(name)) fail(where, "use 1-32 characters of a-z, 0-9, '_' or '-' for the provider name");
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail(where, "expected an object");
-  const allowed = ["kind", "endpoint", "model", "keyFile", "onPrem", "timeoutMs", "maxStateChars"];
+  const allowed = ["kind", "endpoint", "model", "version", "sha256", "keyFile", "onPrem", "timeoutMs", "maxStateChars"];
   const p = raw as Record<string, unknown>;
   const unknown = Object.keys(p).filter(k => !allowed.includes(k));
-  if (unknown.length) fail(where, `remove unknown field ${unknown.join(", ")}`);
+  if (unknown.length) fail(where, `remove ${unknownFields(unknown, allowed)}`);
   if (p.kind !== "systemone" && p.kind !== "logits") fail(`${where}.kind`, 'use "systemone" or "logits"');
   if (typeof p.onPrem !== "boolean") fail(`${where}.onPrem`, "set true only for a decider on your own network, false otherwise");
-  if (typeof p.model !== "string" || !p.model.trim() || p.model === "latest" || p.model.endsWith("-latest"))
-    fail(`${where}.model`, "pin a model name and version; moving aliases such as \"latest\" or \"*-latest\" are not accepted");
+  if (!pinned(p.model)) fail(`${where}.model`, "pin a model name and version; moving aliases such as \"latest\" or \"*-latest\" are not accepted");
+  if (p.version !== undefined && (!pinned(p.version) || p.version.length > 64 || /\s/.test(p.version)))
+    fail(`${where}.version`, "give a pinned version of at most 64 characters without spaces; \"latest\" is not accepted");
+  if (p.sha256 !== undefined && (typeof p.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(p.sha256))) fail(`${where}.sha256`, "give the 64 lowercase hex digits of the weights' sha256");
   if (typeof p.endpoint !== "string") fail(`${where}.endpoint`, "give the server base URL, for example https://decider.example");
   let url: URL;
   try { url = new URL(p.endpoint); } catch { fail(`${where}.endpoint`, "give a valid http(s) base URL"); }
@@ -61,7 +71,9 @@ export function parseProvider(name: string, raw: unknown): ProviderConfig {
     name,
     kind: p.kind,
     endpoint: url.href.replace(/\/+$/, ""),
-    model: p.model,
+    model: p.model as string,
+    ...(p.version === undefined ? {} : { version: p.version as string }),
+    ...(p.sha256 === undefined ? {} : { sha256: p.sha256 as string }),
     ...(p.keyFile === undefined ? {} : { keyFile: p.keyFile as string }),
     onPrem: p.onPrem,
     timeoutMs: integer(p.timeoutMs, DEFAULT_TIMEOUT_MS, 100, 120_000, `${where}.timeoutMs`),
@@ -81,7 +93,7 @@ export function parseConfig(raw: unknown): Config {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("file", "expected a JSON object with \"providers\"");
   const c = raw as Record<string, unknown>;
   const unknown = Object.keys(c).filter(k => k !== "providers" && k !== "default");
-  if (unknown.length) fail("file", `remove unknown field ${unknown.join(", ")}`);
+  if (unknown.length) fail("file", `remove ${unknownFields(unknown, ["providers", "default"])}`);
   if (typeof c.providers !== "object" || c.providers === null || Array.isArray(c.providers)) fail("providers", "expected an object of named providers");
   const providers: Record<string, ProviderConfig> = {};
   for (const [name, value] of Object.entries(c.providers)) providers[name] = parseProvider(name, value);
@@ -97,7 +109,7 @@ export function selectProvider(config: Config, name?: string): ProviderConfig {
   const chosen = name ?? config.default ?? (Object.keys(config.providers).length === 1 ? Object.keys(config.providers)[0] : undefined);
   // hasOwn: names such as "constructor" must not resolve to Object.prototype members.
   const provider = chosen !== undefined && Object.hasOwn(config.providers, chosen) ? config.providers[chosen] : undefined;
-  if (!provider) throw new UsageError(`provider: ${chosen === undefined ? "none selected" : `unknown provider ${JSON.stringify(chosen)}`}; pass --provider NAME or set "default" in config.json (see adec providers)`);
+  if (!provider) throw new UsageError(`provider: ${chosen === undefined ? "none selected" : `unknown provider${NAME.test(chosen) ? ` ${JSON.stringify(chosen)}` : ""}`}; pass --provider NAME or set "default" in config.json (see adec providers)`);
   return checkProvider(provider);
 }
 

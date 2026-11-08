@@ -7,4 +7,8 @@ export {
 export { adecHome, checkProvider, loadConfig, parseConfig, parseProvider, selectProvider, type Config, type ProviderConfig } from "./config.ts";
 export { decide, type DecideOptions } from "./decide.ts";
 export { evaluate, parseRows, type EvalReport, type EvalRow } from "./eval.ts";
-export { labelOutcome, shadowReport, shadowDir } from "./shadow.ts";
+export { labelOutcome, routeReport, shadowReport, shadowDir } from "./shadow.ts";
+export { calibrate, loadFits, type Fit, type SplitMetrics } from "./calibrate.ts";
+export { parsePolicy, type Candidate, type Pair, type Policy } from "./policy.ts";
+export { parseRouteRequest, route, type RouteDecision, type RouteReason, type RouteRequest, type RouteRule } from "./route.ts";
+export { serve, type ServeOptions, type ServerHandle } from "./serve.ts";

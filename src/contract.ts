@@ -27,6 +27,8 @@ export interface Decision {
   abstain: boolean;
   reason: Reason;
   labelMass?: number;
+  /** Present when a calibration fit applied (probabilities and margin are tempered). */
+  calibration?: { questionId: string; method: "temperature"; fittedAt: string };
   decider: Decider;
 }
 
@@ -36,15 +38,21 @@ export class UsageError extends Error {}
 const QUESTION_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 export const OPTION_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
-function record(raw: unknown, allowed: readonly string[], where: string): Record<string, unknown> {
+/** "unknown field(s)" without echoing the names: a caller-sent key is unvalidated text and may be content. */
+export function unknownFields(unknown: readonly string[], allowed: readonly string[], noun = "field"): string {
+  return `${unknown.length} unknown ${noun}${unknown.length > 1 ? "s" : ""}; allowed ${noun}s are ${allowed.join(", ") || "none"}`;
+}
+
+/** A JSON object with only the allowed keys. */
+export function fields(raw: unknown, allowed: readonly string[], where: string): Record<string, unknown> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`${where}: expected a JSON object`);
   const unknown = Object.keys(raw).filter(k => !allowed.includes(k));
-  if (unknown.length) throw new UsageError(`${where}: unknown field ${unknown.map(k => JSON.stringify(k)).join(", ")}; allowed fields are ${allowed.join(", ")}`);
+  if (unknown.length) throw new UsageError(`${where}: ${unknownFields(unknown, allowed)}`);
   return raw as Record<string, unknown>;
 }
 
 export function parseQuestion(raw: unknown): Question {
-  const q = record(raw, ["questionId", "instructions", "options"], "question");
+  const q = fields(raw, ["questionId", "instructions", "options"], "question");
   if (typeof q.questionId !== "string" || !QUESTION_ID.test(q.questionId))
     throw new UsageError("question.questionId: use 1-64 characters of a-z, 0-9, '.', '_' or '-', starting with a letter or digit (for example \"ahub.triage.v1\")");
   if (typeof q.instructions !== "string" || !q.instructions.trim() || q.instructions.length > MAX_INSTRUCTIONS)
@@ -53,7 +61,7 @@ export function parseQuestion(raw: unknown): Question {
     throw new UsageError(`question.options: give ${MIN_OPTIONS} to ${MAX_OPTIONS} options; split a larger set into two questions`);
   const seen = new Set<string>();
   const options = q.options.map((rawOption, i) => {
-    const o = record(rawOption, ["id", "description"], `question.options[${i}]`);
+    const o = fields(rawOption, ["id", "description"], `question.options[${i}]`);
     if (typeof o.id !== "string" || !OPTION_ID.test(o.id))
       throw new UsageError(`question.options[${i}].id: use 1-32 characters of a-z, 0-9, '_' or '-', starting with a letter or digit`);
     if (seen.has(o.id)) throw new UsageError(`question.options[${i}].id: duplicate id ${JSON.stringify(o.id)}; option ids must be unique`);

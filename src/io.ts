@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
-import { open } from "node:fs/promises";
+import { appendFile, mkdir, open } from "node:fs/promises";
+import { dirname } from "node:path";
 import { UsageError } from "./contract.ts";
 
 /**
@@ -43,8 +44,8 @@ export async function readStdinBounded(max: number, what: string): Promise<strin
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** Read an HTTP body up to `max` bytes; returns undefined when it is larger. */
-export async function readBodyBounded(res: Response, max: number): Promise<string | undefined> {
+/** Read an HTTP request or response body up to `max` bytes; returns undefined when it is larger. */
+export async function readBodyBounded(res: { body: ReadableStream<Uint8Array> | null }, max: number): Promise<string | undefined> {
   if (!res.body) return "";
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -57,4 +58,21 @@ export async function readBodyBounded(res: Response, max: number): Promise<strin
     chunks.push(value);
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * Append one line to a JSONL file (dir 0700, file 0600). A crash can leave a torn last line without "\n";
+ * start a new line first so this record is not glued onto it and lost.
+ */
+export async function appendLine(file: string, line: string): Promise<void> {
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+  let torn = false;
+  try {
+    const handle = await open(file, "r");
+    try {
+      const { size } = await handle.stat();
+      if (size > 0) { const last = Buffer.alloc(1); await handle.read(last, 0, 1, size - 1); torn = last[0] !== 0x0a; }
+    } finally { await handle.close(); }
+  } catch { /* no file yet */ }
+  await appendFile(file, `${torn ? "\n" : ""}${line}\n`, { mode: 0o600 });
 }

@@ -30,7 +30,7 @@ test("ask decides (exit 0), abstains (exit 3) and logs to the shadow directory",
     expect(await main(["ask", "--question", s.q, "--state", "fix it", "--min-margin", "0.9"], s.io)).toBe(EXIT.abstained);
     expect(await main(["shadow", "label", d.id, "implement"], s.io)).toBe(EXIT.ok);
     expect(await main(["shadow", "report", "--json"], s.io)).toBe(EXIT.ok);
-    expect(JSON.parse(s.out.at(-1)!)[0]).toMatchObject({ decisions: 2, labelled: 1, agreement: 1 });
+    expect(JSON.parse(s.out.at(-1)!).questions[0]).toMatchObject({ decisions: 2, labelled: 1, agreement: 1 });
   } finally { fake.stop(); }
 });
 

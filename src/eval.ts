@@ -1,5 +1,5 @@
 import { checkProvider, type ProviderConfig } from "./config.ts";
-import { parseMinMargin, parseQuestion, topTwo, UsageError, type Question } from "./contract.ts";
+import { parseMinMargin, parseQuestion, topTwo, unknownFields, UsageError, type Question } from "./contract.ts";
 import { decide, type DecideOptions } from "./decide.ts";
 
 export interface EvalRow { state: string; label: string; pii?: boolean }
@@ -11,11 +11,11 @@ export interface EvalReport {
 }
 
 /** One row check for the CLI file reader and the library entry point alike. */
-function parseRow(raw: unknown, ids: Set<string>, where: string): EvalRow {
+export function parseRow(raw: unknown, ids: Set<string>, where: string): EvalRow {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`${where}: expected an object`);
   const r = raw as Record<string, unknown>;
   const unknown = Object.keys(r).filter(k => !["id", "state", "label", "pii"].includes(k));
-  if (unknown.length) throw new UsageError(`${where}: unknown field ${unknown.join(", ")}; allowed fields are id, state, label, pii`);
+  if (unknown.length) throw new UsageError(`${where}: ${unknownFields(unknown, ["id", "state", "label", "pii"])}`);
   if (typeof r.state !== "string") throw new UsageError(`${where}: state must be a string`);
   if (typeof r.label !== "string" || !ids.has(r.label)) throw new UsageError(`${where}: label must be one of the question's option ids`);
   if (r.pii !== undefined && typeof r.pii !== "boolean") throw new UsageError(`${where}: pii must be true or false`);
@@ -53,6 +53,11 @@ export function ece(points: { confidence: number; correct: boolean }[], bins = 1
   return total;
 }
 
+/** Multi-class Brier score of one answer. */
+export function brierScore(question: Question, probabilities: Record<string, number>, label: string): number {
+  return question.options.reduce((s, o) => s + ((probabilities[o.id] ?? 0) - (o.id === label ? 1 : 0)) ** 2, 0);
+}
+
 export function macroF1(pairs: { predicted: string; label: string }[]): number | null {
   if (!pairs.length) return null;
   const classes = new Set(pairs.flatMap(p => [p.predicted, p.label]));
@@ -67,7 +72,7 @@ export function macroF1(pairs: { predicted: string; label: string }[]): number |
 }
 
 /** Replay a labelled set sequentially; writes no shadow records. ponytail: sequential and no retries, add concurrency when sets grow past a few thousand rows. */
-export async function evaluate(question: Question, rows: EvalRow[], provider: ProviderConfig, options: Omit<DecideOptions, "shadowDir"> & { limit?: number; minMargin?: number } = {}): Promise<EvalReport> {
+export async function evaluate(question: Question, rows: EvalRow[], provider: ProviderConfig, options: Pick<DecideOptions, "key"> & { limit?: number; minMargin?: number } = {}): Promise<EvalReport> {
   // Validate everything before the first provider call, with the CLI's rules.
   question = parseQuestion(question);
   const ids = new Set(question.options.map(o => o.id));
@@ -77,7 +82,7 @@ export async function evaluate(question: Question, rows: EvalRow[], provider: Pr
   const minMargin = parseMinMargin(options.minMargin);
   provider = checkProvider(provider);
   const unknownOpts = Object.keys(options).filter(k => !["key", "limit", "minMargin"].includes(k));
-  if (unknownOpts.length) throw new UsageError(`eval options: unknown field ${unknownOpts.join(", ")}; allowed fields are key, limit, minMargin`);
+  if (unknownOpts.length) throw new UsageError(`eval options: ${unknownFields(unknownOpts, ["key", "limit", "minMargin"])}`);
   if (options.key !== undefined && typeof options.key !== "function") throw new UsageError("eval options.key: give a function or leave it out");
   const used = options.limit === undefined ? rows : rows.slice(0, options.limit);
   const abstained: Record<string, number> = {};
@@ -94,7 +99,7 @@ export async function evaluate(question: Question, rows: EvalRow[], provider: Pr
       // Same tie rule as the decision itself (question order), whatever the key order of the object.
       const top = topTwo(question, d.probabilities).choice;
       calibration.push({ confidence: d.probabilities[top] ?? 0, correct: top === row.label });
-      brierSum += question.options.reduce((s, o) => s + ((d.probabilities[o.id] ?? 0) - (o.id === row.label ? 1 : 0)) ** 2, 0);
+      brierSum += brierScore(question, d.probabilities, row.label);
     }
   }
   const evaluated = used.length - skipped;

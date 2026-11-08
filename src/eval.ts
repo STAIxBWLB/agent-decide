@@ -121,7 +121,7 @@ function metricReport(m: Metrics): SliceMetrics {
 export interface EvalOptions extends Pick<DecideOptions, "key"> {
   limit?: number; minMargin?: number; perRow?: boolean; flipQuestion?: Question;
 }
-function parseEvalOptions(raw: EvalOptions, question: Question): EvalOptions {
+export function parseEvalOptions(raw: EvalOptions, question: Question): EvalOptions {
   const o = fields(raw, ["key", "limit", "minMargin", "perRow", "flipQuestion"], "eval options");
   if (o.limit !== undefined && (typeof o.limit !== "number" || !Number.isInteger(o.limit) || o.limit < 1)) throw new UsageError("eval: limit must be a positive integer");
   if (o.perRow !== undefined && typeof o.perRow !== "boolean") throw new UsageError("eval: perRow must be true or false");
@@ -205,7 +205,7 @@ function parseRowResult(raw: unknown, n: number): EvalRowResult {
   const probs = fields(r.probabilities, Object.keys(r.probabilities && typeof r.probabilities === "object" ? r.probabilities : {}), `${where} probabilities`);
   const keys = Object.keys(probs), probabilities: Record<string, number> = {};
   if (keys.length) {
-    if (keys.length < 2 || keys.length > 26 || keys.some(k => !optionId(k) || !unit(probs[k])) || !Object.hasOwn(probs, r.label) || typeof r.top !== "string" || !Object.hasOwn(probs, r.top) || (r.choice !== null && r.choice !== r.top) || (r.flipChoice != null && !Object.hasOwn(probs, r.flipChoice)) || !["ok", "low_margin"].includes(r.reason as string)) throw new UsageError(`${where}: invalid probability distribution`);
+    if (keys.length < 2 || keys.length > 26 || keys.some(k => !optionId(k) || !unit(probs[k])) || !Object.hasOwn(probs, r.label) || typeof r.top !== "string" || !Object.hasOwn(probs, r.top) || (r.choice !== null && r.choice !== r.top) || (r.flipChoice !== undefined && r.flipChoice !== null && !Object.hasOwn(probs, r.flipChoice)) || !["ok", "low_margin"].includes(r.reason as string)) throw new UsageError(`${where}: invalid probability distribution`);
     for (const k of keys) probabilities[k] = probs[k] as number;
     const sorted = Object.values(probabilities).sort((a, b) => b - a);
     if (Math.abs(sorted.reduce((s, p) => s + p, 0) - 1) > 0.001 || probabilities[r.top] !== sorted[0] || Math.abs(r.margin - (sorted[0]! - sorted[1]!)) > 0.001) throw new UsageError(`${where}: inconsistent top or margin`);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EXIT, main } from "../src/cli.ts";
 import { COMMANDS } from "../src/commands-table.ts";
@@ -111,5 +111,25 @@ test("#6 AC3: CLI flip question is wired and validates its option set", async ()
     writeFileSync(flip, JSON.stringify(question));
     expect(await main(args, s.io)).toBe(EXIT.usage);
     expect(fake.seen).toHaveLength(2);
+  } finally { fake.stop(); }
+});
+
+
+test("review P2: invalid eval input leaves no rows-out file and a corrected retry can use the same path", async () => {
+  const fake = fakeServer(() => systemOneAnswer({ implement: 1, review: 0, plan: 0 }));
+  try {
+    for (const invalid of ["margin", "flip-id", "flip-options"]) {
+      const s = setup(fake.url), set = join(s.home, "set.jsonl"), output = join(s.home, "rows.jsonl"), flip = join(s.home, "flip.json");
+      writeFileSync(set, JSON.stringify({ state: "s", label: "implement" }));
+      writeFileSync(flip, JSON.stringify(invalid === "flip-id" ? question : { ...question, questionId: "flip.v1", options: [{ id: "implement" }, { id: "other" }] }));
+      const args = ["eval", "--question", s.q, "--set", set, "--rows-out", output, "--json"];
+      const calls = fake.seen.length;
+      expect(await main([...args, ...(invalid === "margin" ? ["--min-margin", "2"] : ["--flip-question", flip])], s.io)).toBe(EXIT.usage);
+      expect(existsSync(output)).toBe(false);
+      expect(fake.seen).toHaveLength(calls);
+      expect(await main(args, s.io)).toBe(EXIT.ok);
+      expect(JSON.parse(readFileSync(output, "utf8"))).toMatchObject({ n: 0, skipped: false, choice: "implement" });
+      expect(fake.seen).toHaveLength(calls + 1);
+    }
   } finally { fake.stop(); }
 });

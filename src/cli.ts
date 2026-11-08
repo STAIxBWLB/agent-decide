@@ -5,7 +5,7 @@ import { COMMANDS, type CommandSpec } from "./commands-table.ts";
 import { adecHome, loadConfig, selectProvider } from "./config.ts";
 import { parseMinMargin, parseQuestion, UsageError } from "./contract.ts";
 import { decide } from "./decide.ts";
-import { compareRows, evaluate, parseCompareOptions, parseResultRows, parseRows } from "./eval.ts";
+import { compareRows, evaluate, parseCompareOptions, parseEvalOptions, parseResultRows, parseRows } from "./eval.ts";
 import { readJsonBounded, readStdinBounded, readTextBounded } from "./io.ts";
 import { serveMcp } from "./mcp.ts";
 import { loadPolicy } from "./policy.ts";
@@ -94,6 +94,7 @@ async function run(p: Parsed, io: Io): Promise<number> {
       const provider = selectProvider(await loadConfig(home), p.values["--provider"]);
       const flipFile = p.values["--flip-question"], rowsOut = p.values["--rows-out"];
       const flipQuestion = flipFile === undefined ? undefined : parseQuestion(await readJsonBounded(flipFile, QUESTION_BYTES, "flip question file"));
+      const options = parseEvalOptions({ minMargin: parseMinMargin(p.values["--min-margin"]), ...(limit === undefined ? {} : { limit }), perRow: rowsOut !== undefined, ...(flipQuestion ? { flipQuestion } : {}) }, question);
       let handle;
       if (rowsOut !== undefined) {
         try { handle = await open(rowsOut, "wx", 0o600); }
@@ -101,7 +102,7 @@ async function run(p: Parsed, io: Io): Promise<number> {
       }
       let r;
       try {
-        r = await evaluate(question, rows, provider, { minMargin: parseMinMargin(p.values["--min-margin"]), ...(limit === undefined ? {} : { limit }), perRow: handle !== undefined, ...(flipQuestion ? { flipQuestion } : {}) });
+        r = await evaluate(question, rows, provider, options);
         if (handle) {
           try { await handle.writeFile(r.rows!.map(row => JSON.stringify(row) + "\n").join("")); }
           catch { throw new UsageError("eval: cannot write rows-out file"); }

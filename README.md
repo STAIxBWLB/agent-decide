@@ -6,7 +6,7 @@ A decision is a proposal. adec never executes, applies or enforces it, and it ne
 
 ## Install
 
-Requires Bun >= 1.4.2. From a checkout: `bun install --frozen-lockfile`, then run `bin/adec.js`.
+Requires Bun >= 1.4.4. From a checkout: `bun install --frozen-lockfile`, then run `bin/adec.js`.
 
 ## Configuration
 

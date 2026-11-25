@@ -5,7 +5,7 @@ import { COMMANDS, type CommandSpec } from "./commands-table.ts";
 import { adecHome, loadConfig, selectProvider } from "./config.ts";
 import { parseMinMargin, parseQuestion, UsageError } from "./contract.ts";
 import { decide } from "./decide.ts";
-import { compareRows, evaluate, parseCompareOptions, parseEvalOptions, parseResultRows, parseRows } from "./eval.ts";
+import { compareRows, evaluate, parseCompareOptions, parseEvalOptions, parseLabelRows, parsePredictionRecords, parsePredictRows, parseResultRows, parseRows, predict, score, type EvalReport, type PredictionRecord } from "./eval.ts";
 import { readJsonBounded, readStdinBounded, readTextBounded } from "./io.ts";
 import { serveMcp } from "./mcp.ts";
 import { loadPolicy } from "./policy.ts";
@@ -68,6 +68,40 @@ function parseJson(text: string, what: string): unknown {
 
 const fmt = (n: number | null, digits = 3) => (n === null ? "-" : n.toFixed(digits));
 
+async function refuseExisting(path: string, cmd: string): Promise<void> {
+  let exists = false;
+  try { await lstat(path); exists = true; }
+  catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new UsageError(`${cmd}: cannot inspect rows-out path; check directory permissions and retry`);
+  }
+  if (exists) throw new UsageError(`${cmd}: rows-out path already exists; give a new file path`);
+}
+
+async function writeRows(path: string, rows: unknown[], cmd: string): Promise<void> {
+  let handle;
+  try { handle = await open(path, "wx", 0o600); }
+  catch { throw new UsageError(`${cmd}: cannot create rows-out file; give a new writable file path (existing files are refused)`); }
+  try {
+    await handle.writeFile(rows.map(row => JSON.stringify(row) + "\n").join(""));
+    await handle.close();
+  } catch {
+    await handle.close().catch(() => {});
+    try { await unlink(path); }
+    catch { throw new UsageError(`${cmd}: cannot remove incomplete rows-out file; remove the incomplete destination before retrying`); }
+    throw new UsageError(`${cmd}: cannot write rows-out file; check free space and permissions, then retry`);
+  }
+}
+
+function evalText(r: EvalReport): string {
+  return [
+    `${r.questionId} on ${r.provider}/${r.model}${r.version === undefined ? "" : ` ${r.version}`}: n ${r.n}, skipped ${r.skipped}, answered ${r.answered}`,
+    `accuracy ${fmt(r.accuracy)}  coverage ${fmt(r.coverage)}  macro-F1 ${fmt(r.macroF1)}  ECE ${fmt(r.ece)}  Brier ${fmt(r.brier)}`,
+    ...(r.flip ? [`flip n ${r.flip.n}, both answered ${r.flip.bothAnswered}, agreed ${r.flip.agreed}, agreement ${fmt(r.flip.agreement)}`] : []),
+    ...Object.entries(r.slices).map(([tag, s]) => `slice ${tag}: n ${s.n}, answered ${s.answered}, accuracy ${fmt(s.accuracy)}, coverage ${fmt(s.coverage)}, macro-F1 ${fmt(s.macroF1)}, ECE ${fmt(s.ece)}, Brier ${fmt(s.brier)}`),
+    `latency p50 ${r.latencyMs.p50 ?? "-"} ms, p95 ${r.latencyMs.p95 ?? "-"} ms; abstained ${JSON.stringify(r.abstained)}`,
+  ].join("\n");
+}
+
 async function run(p: Parsed, io: Io): Promise<number> {
   const home = adecHome(io.env), asJson = p.flags.has("--json");
   const print = (value: unknown, text: string) => io.out(asJson ? JSON.stringify(value, null, 2) : text);
@@ -95,40 +129,14 @@ async function run(p: Parsed, io: Io): Promise<number> {
       const flipFile = p.values["--flip-question"], rowsOut = p.values["--rows-out"];
       const flipQuestion = flipFile === undefined ? undefined : parseQuestion(await readJsonBounded(flipFile, QUESTION_BYTES, "flip question file"));
       const options = parseEvalOptions({ minMargin: parseMinMargin(p.values["--min-margin"]), ...(limit === undefined ? {} : { limit }), perRow: rowsOut !== undefined, ...(flipQuestion ? { flipQuestion } : {}) }, question);
-      if (rowsOut !== undefined) {
-        let exists = false;
-        try { await lstat(rowsOut); exists = true; }
-        catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new UsageError("eval: cannot inspect rows-out path; check directory permissions and retry");
-        }
-        if (exists) throw new UsageError("eval: rows-out path already exists; give a new file path");
-      }
+      if (rowsOut !== undefined) await refuseExisting(rowsOut, "eval");
       // Evaluation can fail after input validation (for example, while reading a key).
       // Do not create any output until it returns; wx still protects against a concurrent creator.
       const r = await evaluate(question, rows, provider, options);
-      if (rowsOut !== undefined) {
-        let handle;
-        try { handle = await open(rowsOut, "wx", 0o600); }
-        catch { throw new UsageError("eval: cannot create rows-out file; give a new writable file path (existing files are refused)"); }
-        try {
-          await handle.writeFile(r.rows!.map(row => JSON.stringify(row) + "\n").join(""));
-          await handle.close();
-        } catch {
-          await handle.close().catch(() => {});
-          try { await unlink(rowsOut); }
-          catch { throw new UsageError("eval: cannot remove incomplete rows-out file; remove the incomplete destination before retrying"); }
-          throw new UsageError("eval: cannot write rows-out file; check free space and permissions, then retry");
-        }
-      }
+      if (rowsOut !== undefined) await writeRows(rowsOut, r.rows!, "eval");
       // Per-row results belong to the requested file, not pooled command output.
       delete r.rows;
-      print(r, [
-        `${r.questionId} on ${r.provider}/${r.model}${r.version === undefined ? "" : ` ${r.version}`}: n ${r.n}, skipped ${r.skipped}, answered ${r.answered}`,
-        `accuracy ${fmt(r.accuracy)}  coverage ${fmt(r.coverage)}  macro-F1 ${fmt(r.macroF1)}  ECE ${fmt(r.ece)}  Brier ${fmt(r.brier)}`,
-        ...(r.flip ? [`flip n ${r.flip.n}, both answered ${r.flip.bothAnswered}, agreed ${r.flip.agreed}, agreement ${fmt(r.flip.agreement)}`] : []),
-        ...Object.entries(r.slices).map(([tag, s]) => `slice ${tag}: n ${s.n}, answered ${s.answered}, accuracy ${fmt(s.accuracy)}, coverage ${fmt(s.coverage)}, macro-F1 ${fmt(s.macroF1)}, ECE ${fmt(s.ece)}, Brier ${fmt(s.brier)}`),
-        `latency p50 ${r.latencyMs.p50 ?? "-"} ms, p95 ${r.latencyMs.p95 ?? "-"} ms; abstained ${JSON.stringify(r.abstained)}`,
-      ].join("\n"));
+      print(r, evalText(r));
       return EXIT.ok;
     }
     case "eval compare": {
@@ -143,6 +151,33 @@ async function run(p: Parsed, io: Io): Promise<number> {
         `bootstrap seed ${r.bootstrap.seed}, resamples ${r.bootstrap.resamples}, 95% interval [${fmt(r.bootstrap.lo)}, ${fmt(r.bootstrap.hi)}]`,
         ...Object.entries(r.slices).map(([tag, s]) => `slice ${tag}: n ${s.n}, accuracy A ${fmt(s.accuracyA)}, B ${fmt(s.accuracyB)}, diff ${fmt(s.diff)}`),
       ].join("\n"));
+      return EXIT.ok;
+    }
+    case "predict": {
+      noPositional(p);
+      const question = parseQuestion(await readJsonBounded(need(p, "--question"), QUESTION_BYTES, "question file"));
+      const rows = parsePredictRows(await readTextBounded(need(p, "--set"), SET_BYTES, "set file"));
+      const rowsOut = need(p, "--rows-out");
+      const provider = selectProvider(await loadConfig(home), p.values["--provider"]);
+      const flipFile = p.values["--flip-question"];
+      const flipQuestion = flipFile === undefined ? undefined : parseQuestion(await readJsonBounded(flipFile, QUESTION_BYTES, "flip question file"));
+      parseEvalOptions(flipQuestion ? { flipQuestion } : {}, question);
+      await refuseExisting(rowsOut, "predict");
+      const records = await predict(question, rows, provider, flipQuestion ? { flipQuestion } : {});
+      await writeRows(rowsOut, records, "predict");
+      io.out(`predict: wrote ${records.length} record(s)`);
+      return EXIT.ok;
+    }
+    case "score": {
+      noPositional(p);
+      const predictions = parsePredictionRecords(await readTextBounded(need(p, "--rows"), SET_BYTES, "prediction records"));
+      const labels = parseLabelRows(await readTextBounded(need(p, "--labels"), SET_BYTES, "labels file"));
+      const rowsOut = p.values["--rows-out"];
+      if (rowsOut !== undefined) await refuseExisting(rowsOut, "score");
+      const r = await score(predictions as PredictionRecord[], labels);
+      if (rowsOut !== undefined) await writeRows(rowsOut, r.rows!, "score");
+      delete r.rows;
+      print(r, evalText(r));
       return EXIT.ok;
     }
     case "calibrate": {

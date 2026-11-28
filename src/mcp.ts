@@ -14,13 +14,29 @@ export const FRAME_BYTES = 1024 * 1024;
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = { type: "string" } as const;
+const bool = { type: "boolean" } as const;
+/** Closed object schema; the handler's parse function still checks values (patterns, bounds, uniqueness). */
+const obj = <P extends Record<string, unknown>, R extends readonly (keyof P & string)[]>(properties: P, required: R) =>
+  ({ type: "object", additionalProperties: false, required, properties }) as const;
+const pair = obj({ alias: str, effort: str }, ["alias", "effort"]);
+/** Fields of parseQuestion (contract.ts). */
+const QUESTION_SCHEMA = obj({
+  questionId: str, instructions: str,
+  options: { type: "array", items: obj({ id: str, description: str }, ["id"]) },
+}, ["questionId", "instructions", "options"]);
+/** Fields of parseRouteRequest (route.ts). */
+const ROUTE_REQUEST_SCHEMA = obj({
+  policyId: str, turnId: str, evidence: str,
+  constraints: obj({ contextTokens: { type: "integer" }, pii: bool, private: bool, explicit: pair, current: pair }, ["contextTokens"]),
+  candidates: { type: "array", items: str },
+}, ["policyId", "evidence", "constraints"]);
 
 export const TOOLS = [
   { name: "adec_ask", description: "Ask one choice question; returns the decision with probabilities, margin and abstention. A proposal, never an action.",
     inputSchema: { type: "object", additionalProperties: false, required: ["question", "state"],
-      properties: { question: { type: "object" }, state: str, pii: { type: "boolean" }, minMargin: { type: "number" }, provider: str } } },
+      properties: { question: QUESTION_SCHEMA, state: str, pii: bool, minMargin: { type: "number" }, provider: str } } },
   { name: "adec_route", description: "Choose a model alias and effort from a routing policy (no pins: pins live in adec serve).",
-    inputSchema: { type: "object", additionalProperties: false, required: ["request"], properties: { request: { type: "object" } } } },
+    inputSchema: { type: "object", additionalProperties: false, required: ["request"], properties: { request: ROUTE_REQUEST_SCHEMA } } },
   { name: "adec_models", description: "Configured providers with pinned versions and calibration status (never keys).",
     inputSchema: { type: "object", additionalProperties: false, properties: {} } },
   { name: "adec_shadow_label", description: "Record the observed outcome of a decision or route by its id.",

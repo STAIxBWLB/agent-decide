@@ -1,7 +1,7 @@
 #!/usr/bin/env -S bun --smol
 const version = /^(\d+)\.(\d+)\.(\d+)/.exec(process.versions.bun ?? "");
-if (!version || Number(version[1]) < 1 || (Number(version[1]) === 1 && (Number(version[2]) < 4 || (Number(version[2]) === 4 && Number(version[3]) < 2)))) {
-  console.error("adec: Bun >=1.4.2 is required. Install Bun: https://bun.sh");
+if (!version || Number(version[1]) < 1 || (Number(version[1]) === 1 && (Number(version[2]) < 4 || (Number(version[2]) === 4 && Number(version[3]) < 4)))) {
+  console.error("adec: Bun >=1.4.4 is required. Install Bun: https://bun.sh");
   process.exit(1);
 }
 const { main } = await import("../src/cli.ts");

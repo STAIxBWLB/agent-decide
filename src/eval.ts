@@ -148,6 +148,13 @@ async function decideRow(question: Question, state: string, pii: boolean | undef
   return result;
 }
 
+/**
+ * Option order for the report: JavaScript property order of the option ids, which is what a prediction record's
+ * rowSha256ByOption keeps after JSON (digit-only ids such as "1" come first, ascending). Equal to question order
+ * whenever no id is digit-only, so eval and score sum Brier terms in the same order and report byte-identical metrics.
+ */
+const recordOrder = (question: Question): string[] => Object.keys(Object.fromEntries(question.options.map(o => [o.id, 0])));
+
 /** The eval report, computed from per-row results alone, so eval and score share it. */
 function report(optionIds: string[], run: RunInfo, results: EvalRowResult[], perRow: boolean): EvalReport {
   const question = { options: optionIds.map(id => ({ id })) } as Question;
@@ -200,7 +207,7 @@ export async function evaluate(question: Question, rows: EvalRow[], provider: Pr
     const decided = await decideRow(question, row.state, row.pii, provider, options);
     results.push(decided ? { ...identity, ...decided } : { ...identity, skipped: true });
   }
-  return report(question.options.map(o => o.id), runInfo(question, provider, !!options.flipQuestion), results, !!options.perRow);
+  return report(recordOrder(question), runInfo(question, provider, !!options.flipQuestion), results, !!options.perRow);
 }
 
 /** An unlabelled set row for predict: every row needs an id, since score joins on it. */
@@ -214,16 +221,7 @@ export function parsePredictRow(raw: unknown, where: string): PredictRow {
   const tags = parseTags(r.tags, where);
   return { id: r.id as string, state: r.state, ...(r.pii ? { pii: true } : {}), ...(r.tags === undefined ? {} : { tags }) };
 }
-export function parsePredictRows(text: string): PredictRow[] {
-  const rows: PredictRow[] = [];
-  text.split("\n").forEach((line, i) => {
-    if (!line.trim()) return;
-    let raw: unknown;
-    try { raw = JSON.parse(line); } catch { throw new UsageError(`set line ${i + 1}: not valid JSON`); }
-    rows.push(parsePredictRow(raw, `set line ${i + 1}`));
-  });
-  return rows;
-}
+export const parsePredictRows = (text: string): PredictRow[] => jsonl(text, "set", parsePredictRow);
 
 /** A label-free prediction record: the eval row format without label and rowSha256, plus stateSha256, rowSha256ByOption and run. */
 export type PredictionRecord = Omit<RowIdentity, "label" | "rowSha256" | "id"> & { id: string; stateSha256: string; rowSha256ByOption: Record<string, string>; run: RunInfo }
@@ -296,25 +294,25 @@ export async function score(predictions: PredictionRecord[], labels: LabelRow[])
     const { stateSha256, rowSha256ByOption, run: rawRun, ...rest } = fields(raw, [...RESULT_FIELDS.filter(k => k !== "label" && k !== "rowSha256"), "stateSha256", "rowSha256ByOption", "run"], where);
     if (rest.id === undefined) throw new UsageError(`${where}: id is required`);
     checkRowId(rest.id, where);
-    if (typeof stateSha256 !== "string" || !SHA.test(stateSha256)) throw new UsageError(`${where}: stateSha256 must be a sha256`);
+    if (typeof stateSha256 !== "string" || !SHA.test(stateSha256)) throw new UsageError(`${where}: stateSha256 must be a sha256; re-run adec predict, the records were edited or truncated`);
     const hashes = fields(rowSha256ByOption, Object.keys(rowSha256ByOption && typeof rowSha256ByOption === "object" ? rowSha256ByOption : {}), `${where} rowSha256ByOption`);
     const ids = Object.keys(hashes);
-    if (ids.length < 2 || ids.length > 26 || ids.some(k => !optionId(k) || typeof hashes[k] !== "string" || !SHA.test(hashes[k] as string))) throw new UsageError(`${where}: rowSha256ByOption needs a sha256 per option id`);
+    if (ids.length < 2 || ids.length > 26 || ids.some(k => !optionId(k) || typeof hashes[k] !== "string" || !SHA.test(hashes[k] as string))) throw new UsageError(`${where}: rowSha256ByOption needs a sha256 per option id; re-run adec predict, the records were edited or truncated`);
     const thisRun = parseRun(rawRun, where);
     if (run === undefined) { run = thisRun; optionIds = ids; }
-    else if (JSON.stringify(run) !== JSON.stringify(thisRun) || JSON.stringify(optionIds) !== JSON.stringify(ids)) throw new UsageError(`${where}: run or option set differs from record 0`);
+    else if (JSON.stringify(run) !== JSON.stringify(thisRun) || JSON.stringify(optionIds) !== JSON.stringify(ids)) throw new UsageError(`${where}: run or option set differs from record 0; score one adec predict output at a time`);
     const id = rest.id as string, label = byId.get(id);
-    if (label === undefined) throw new UsageError(`score: ${where}: no label for this id`);
+    if (label === undefined) throw new UsageError(`score: ${where}: no label for this id; add it to the labels file`);
     if (used.has(id)) throw new UsageError(`score: ${where}: duplicate id`);
     used.add(id);
     if (!ids.includes(label)) throw new UsageError(`score: label for ${where} is not one of its option ids`);
     const { v, n: rn, id: _id, tags, ...decision } = rest;
-    const row = parseRowResult({ v, n: rn, id, rowSha256: hashes[label], label, tags, ...decision }, n);
+    const row = parseRowResult({ v, n: rn, id, rowSha256: hashes[label], label, tags, ...decision }, n, where);
     if (!row.skipped && Object.keys(row.probabilities).length && JSON.stringify(Object.keys(row.probabilities)) !== JSON.stringify(ids)) throw new UsageError(`${where}: probabilities must cover exactly the option ids`);
     if (thisRun.flip !== (!row.skipped && row.flipChoice !== undefined) && !row.skipped) throw new UsageError(`${where}: flipChoice must be present exactly when run.flip is true`);
     results.push(row);
   });
-  if (used.size !== byId.size) throw new UsageError(`score: ${byId.size - used.size} label id(s) have no prediction record`);
+  if (used.size !== byId.size) throw new UsageError(`score: ${byId.size - used.size} label id(s) have no prediction record; re-run adec predict on the full set or drop those labels`);
   return report(optionIds!, run!, results, true);
 }
 
@@ -324,8 +322,7 @@ const optionId = (value: unknown): value is string => typeof value === "string" 
 const unit = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 
 /** Closed, content-free result schema, used for both file and library inputs. */
-function parseRowResult(raw: unknown, n: number): EvalRowResult {
-  const where = `eval result row ${n}`;
+function parseRowResult(raw: unknown, n: number, where = `eval result row ${n}`): EvalRowResult {
   const r = fields(raw, RESULT_FIELDS, where);
   checkRowId(r.id, where);
   if (r.v !== 1 || r.n !== n || typeof r.rowSha256 !== "string" || !/^[a-f0-9]{64}$/.test(r.rowSha256) || !optionId(r.label) || !Array.isArray(r.tags) || typeof r.skipped !== "boolean")
@@ -409,7 +406,7 @@ function compareMetrics(deltas: { a: number; b: number }[]): CompareSlice {
 export async function compareRows(a: EvalRowResult[], b: EvalRowResult[], options: CompareOptions): Promise<CompareReport> {
   const { seed, resamples } = parseCompareOptions(options);
   if (!Array.isArray(a) || !Array.isArray(b)) throw new UsageError("eval compare: give two arrays of per-row results");
-  a = Array.from(a, parseRowResult); b = Array.from(b, parseRowResult);
+  a = Array.from(a, (r, i) => parseRowResult(r, i)); b = Array.from(b, (r, i) => parseRowResult(r, i));
   if (a.length !== b.length) throw new UsageError("eval compare: row count mismatch");
   const deltas: { a: number; b: number }[] = [], slices = new Map<string, { a: number; b: number }[]>();
   let bothCorrect = 0, aOnly = 0, bOnly = 0, bothWrong = 0, agreed = 0;

@@ -128,3 +128,45 @@ test("predict and score library inputs are re-validated", async () => {
     expect(fake.seen).toHaveLength(0);
   } finally { fake.stop(); }
 });
+
+test("score errors name the record as a prediction record and give a next step, without state, label or field values", async () => {
+  const fake = fakeServer(respond);
+  try {
+    const p = provider(fake.url, { onPrem: true });
+    const records = await predict(question, unlabelled, p);
+    const cases: [unknown[], unknown[], RegExp][] = [
+      [records, labels.slice(1), /no label for this id; add it to the labels file$/],
+      [records, [...labels, { id: "zz", label: "plan" }], /label id\(s\) have no prediction record; re-run adec predict on the full set or drop those labels$/],
+      [[records[0], { ...records[1], run: { ...records[1]!.run, model: "other" } }], labels.slice(0, 2), /differs from record 0; score one adec predict output at a time$/],
+      [[{ ...records[0], stateSha256: "x" }], labels.slice(0, 1), /stateSha256 must be a sha256; re-run adec predict, the records were edited or truncated$/],
+      [[{ ...records[0], rowSha256ByOption: { implement: "x" } }], labels.slice(0, 1), /sha256 per option id; re-run adec predict, the records were edited or truncated$/],
+      [[{ ...records[0], latencyMs: -1 }], labels.slice(0, 1), /^prediction record 0/],
+    ];
+    for (const [rows, l, want] of cases) {
+      const e = await score(rows as never, l as never).then(() => null, (x: unknown) => x);
+      expect(e).toBeInstanceOf(UsageError);
+      const msg = (e as Error).message;
+      expect(msg).toMatch(want);
+      expect(msg).not.toContain("eval result row");
+      for (const secret of [STATE, "implement", "review", "plan"]) expect(msg).not.toContain(secret);
+    }
+  } finally { fake.stop(); }
+});
+
+test("digit-only option ids: predict + score equals eval byte for byte", async () => {
+  // Property order puts "1", "2", "3" before question order; these values make the Brier sum order-sensitive.
+  // Row a alone (slice t) is order-sensitive: summing Brier in question order 3,1,2 gives 1.3734, in property order
+  // 1,2,3 (the order a record's rowSha256ByOption keeps) 1.3734000000000002. Before the fix eval and score differed here.
+  const digits = { questionId: "digits.v1", instructions: "Pick one.", options: [{ id: "3" }, { id: "1" }, { id: "2" }] };
+  const probs: Record<string, Record<string, number>> = {
+    a: { "3": 0.78, "1": 0.13, "2": 0.09 }, b: { "3": 0.1, "1": 0.3, "2": 0.6 }, c: { "3": 0.7, "1": 0.2, "2": 0.1 },
+  };
+  const fake = fakeServer((body: any) => systemOneAnswer(probs[body.state]!));
+  try {
+    const rows = [{ id: "a", state: "a", label: "1", tags: ["t"] }, { id: "b", state: "b", label: "3" }, { id: "c", state: "c", label: "3" }];
+    const p = provider(fake.url, { onPrem: true });
+    const evaluated = await evaluate(digits, rows, p, { perRow: true });
+    const scored = await score(await predict(digits, rows.map(({ label: _l, ...r }) => r), p), rows.map(r => ({ id: r.id, label: r.label })));
+    expect(JSON.stringify(scored)).toBe(JSON.stringify(evaluated));
+  } finally { fake.stop(); }
+});

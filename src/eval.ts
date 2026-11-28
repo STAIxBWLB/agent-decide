@@ -132,6 +132,58 @@ export function parseEvalOptions(raw: EvalOptions, question: Question): EvalOpti
   return { ...raw, minMargin: parseMinMargin(o.minMargin), ...(flipQuestion ? { flipQuestion } : {}) };
 }
 
+interface RunInfo { questionId: string; provider: string; model: string; version?: string; flip: boolean }
+type Decided = Exclude<EvalRowResult, { skipped: true }>;
+const sha256 = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+/** One provider pass over a row: the shared core of eval and predict. Returns null for a PII row on an off-prem provider (no request is built). */
+async function decideRow(question: Question, state: string, pii: boolean | undefined, provider: ProviderConfig, options: EvalOptions): Promise<Omit<Decided, keyof RowIdentity> | null> {
+  if (pii && !provider.onPrem) return null;
+  const callOptions = { shadowDir: null, ...(options.key ? { key: options.key } : {}) };
+  const d: Decision = await decide({ question, state, minMargin: options.minMargin }, provider, callOptions);
+  const top = Object.keys(d.probabilities).length ? topTwo(question, d.probabilities).choice : null;
+  const result: Omit<Decided, keyof RowIdentity> = { skipped: false, choice: d.choice, abstain: d.abstain, reason: d.reason,
+    margin: d.margin, top, probabilities: d.probabilities, latencyMs: d.decider.latencyMs };
+  if (options.flipQuestion) result.flipChoice = (await decide({ question: options.flipQuestion, state, minMargin: options.minMargin }, provider, callOptions)).choice;
+  return result;
+}
+
+/** The eval report, computed from per-row results alone, so eval and score share it. */
+function report(optionIds: string[], run: RunInfo, results: EvalRowResult[], perRow: boolean): EvalReport {
+  const question = { options: optionIds.map(id => ({ id })) } as Question;
+  const all = metrics(), slices = new Map<string, Metrics>();
+  const abstained: Record<string, number> = {}, latencies: number[] = [];
+  const flip = { n: 0, bothAnswered: 0, agreed: 0, agreement: null as number | null };
+  for (const result of results) {
+    if (!result.skipped) {
+      if (result.reason !== "state_too_long" && result.reason !== "off_prem") latencies.push(result.latencyMs);
+      if (result.abstain) abstained[result.reason] = (abstained[result.reason] ?? 0) + 1;
+      if (run.flip) {
+        flip.n++;
+        const f = result.flipChoice ?? null;
+        if (!result.abstain && f !== null) { flip.bothAnswered++; if (result.choice === f) flip.agreed++; }
+      }
+    }
+    addMetrics(all, result, question);
+    for (const tag of result.tags) {
+      if (!slices.has(tag)) slices.set(tag, metrics());
+      addMetrics(slices.get(tag)!, result, question);
+    }
+  }
+  latencies.sort((a, b) => a - b);
+  flip.agreement = flip.n ? flip.agreed / flip.n : null;
+  return {
+    questionId: run.questionId, provider: run.provider, model: run.model,
+    ...(run.version === undefined ? {} : { version: run.version }),
+    ...metricReport(all), skipped: all.skipped, abstained,
+    latencyMs: { p50: percentile(latencies, 0.5), p95: percentile(latencies, 0.95) },
+    slices: Object.fromEntries([...slices].map(([tag, m]) => [tag, metricReport(m)])),
+    ...(run.flip ? { flip } : {}), ...(perRow ? { rows: results } : {}),
+  };
+}
+const runInfo = (question: Question, provider: ProviderConfig, flip: boolean): RunInfo => ({ questionId: question.questionId, provider: provider.name, model: provider.model,
+  ...(provider.version === undefined ? {} : { version: provider.version }), flip });
+
 /** Replay sequentially without shadow records; optional returned rows contain no request content. */
 export async function evaluate(question: Question, rows: EvalRow[], provider: ProviderConfig, options: EvalOptions = {}): Promise<EvalReport> {
   question = parseQuestion(question);
@@ -141,46 +193,129 @@ export async function evaluate(question: Question, rows: EvalRow[], provider: Pr
   options = parseEvalOptions(options, question);
   provider = checkProvider(provider);
   const used = options.limit === undefined ? rows : rows.slice(0, options.limit);
-  const all = metrics(), slices = new Map<string, Metrics>();
-  const abstained: Record<string, number> = {}, latencies: number[] = [], results: EvalRowResult[] = [];
-  const flip = { n: 0, bothAnswered: 0, agreed: 0, agreement: null as number | null };
-  const callOptions = { shadowDir: null, ...(options.key ? { key: options.key } : {}) };
+  const results: EvalRowResult[] = [];
   for (const [n, row] of used.entries()) {
     const identity: RowIdentity = { v: 1, n, ...(row.id === undefined ? {} : { id: row.id }),
-      rowSha256: createHash("sha256").update(JSON.stringify([row.state, row.label])).digest("hex"), label: row.label, tags: row.tags ?? [] };
-    let result: EvalRowResult;
-    if (row.pii && !provider.onPrem) result = { ...identity, skipped: true };
-    else {
-      const d: Decision = await decide({ question, state: row.state, minMargin: options.minMargin }, provider, callOptions);
-      const top = Object.keys(d.probabilities).length ? topTwo(question, d.probabilities).choice : null;
-      result = { ...identity, skipped: false, choice: d.choice, abstain: d.abstain, reason: d.reason,
-        margin: d.margin, top, probabilities: d.probabilities, latencyMs: d.decider.latencyMs };
-      if (d.reason !== "state_too_long" && d.reason !== "off_prem") latencies.push(d.decider.latencyMs);
-      if (d.abstain) abstained[d.reason] = (abstained[d.reason] ?? 0) + 1;
-      if (options.flipQuestion) {
-        const f = await decide({ question: options.flipQuestion, state: row.state, minMargin: options.minMargin }, provider, callOptions);
-        result.flipChoice = f.choice;
-        flip.n++;
-        if (!d.abstain && !f.abstain) { flip.bothAnswered++; if (d.choice === f.choice) flip.agreed++; }
-      }
-    }
-    addMetrics(all, result, question);
-    for (const tag of result.tags) {
-      if (!slices.has(tag)) slices.set(tag, metrics());
-      addMetrics(slices.get(tag)!, result, question);
-    }
-    if (options.perRow) results.push(result);
+      rowSha256: sha256([row.state, row.label]), label: row.label, tags: row.tags ?? [] };
+    const decided = await decideRow(question, row.state, row.pii, provider, options);
+    results.push(decided ? { ...identity, ...decided } : { ...identity, skipped: true });
   }
-  latencies.sort((a, b) => a - b);
-  flip.agreement = flip.n ? flip.agreed / flip.n : null;
-  return {
-    questionId: question.questionId, provider: provider.name, model: provider.model,
-    ...(provider.version === undefined ? {} : { version: provider.version }),
-    ...metricReport(all), skipped: all.skipped, abstained,
-    latencyMs: { p50: percentile(latencies, 0.5), p95: percentile(latencies, 0.95) },
-    slices: Object.fromEntries([...slices].map(([tag, m]) => [tag, metricReport(m)])),
-    ...(options.flipQuestion ? { flip } : {}), ...(options.perRow ? { rows: results } : {}),
-  };
+  return report(question.options.map(o => o.id), runInfo(question, provider, !!options.flipQuestion), results, !!options.perRow);
+}
+
+/** An unlabelled set row for predict: every row needs an id, since score joins on it. */
+export interface PredictRow { id: string; state: string; pii?: boolean; tags?: string[] }
+export function parsePredictRow(raw: unknown, where: string): PredictRow {
+  const r = fields(raw, ["id", "state", "pii", "tags"], where);
+  if (r.id === undefined) throw new UsageError(`${where}: id is required (score joins predictions to labels by id)`);
+  checkRowId(r.id, where);
+  if (typeof r.state !== "string") throw new UsageError(`${where}: state must be a string`);
+  if (r.pii !== undefined && typeof r.pii !== "boolean") throw new UsageError(`${where}: pii must be true or false`);
+  const tags = parseTags(r.tags, where);
+  return { id: r.id as string, state: r.state, ...(r.pii ? { pii: true } : {}), ...(r.tags === undefined ? {} : { tags }) };
+}
+export function parsePredictRows(text: string): PredictRow[] {
+  const rows: PredictRow[] = [];
+  text.split("\n").forEach((line, i) => {
+    if (!line.trim()) return;
+    let raw: unknown;
+    try { raw = JSON.parse(line); } catch { throw new UsageError(`set line ${i + 1}: not valid JSON`); }
+    rows.push(parsePredictRow(raw, `set line ${i + 1}`));
+  });
+  return rows;
+}
+
+/** A label-free prediction record: the eval row format without label and rowSha256, plus stateSha256, rowSha256ByOption and run. */
+export type PredictionRecord = Omit<RowIdentity, "label" | "rowSha256" | "id"> & { id: string; stateSha256: string; rowSha256ByOption: Record<string, string>; run: RunInfo }
+  & ({ skipped: true } | Omit<Decided, keyof RowIdentity>);
+export interface PredictOptions extends Pick<DecideOptions, "key"> { flipQuestion?: Question }
+
+/** Label-free replay: no label is read or written, no shadow record, no metric. */
+export async function predict(question: Question, rows: PredictRow[], provider: ProviderConfig, options: PredictOptions = {}): Promise<PredictionRecord[]> {
+  question = parseQuestion(question);
+  if (!Array.isArray(rows)) throw new UsageError("predict: rows must be an array");
+  rows = Array.from(rows, (r, i) => parsePredictRow(r, `rows[${i}]`));
+  const seen = new Set<string>();
+  rows.forEach((r, i) => { if (seen.has(r.id)) throw new UsageError(`rows[${i}]: duplicate id`); seen.add(r.id); });
+  const o = fields(options, ["key", "flipQuestion"], "predict options");
+  const parsed = parseEvalOptions({ ...(o.key === undefined ? {} : { key: o.key as EvalOptions["key"] }), ...(o.flipQuestion === undefined ? {} : { flipQuestion: o.flipQuestion as Question }) }, question);
+  provider = checkProvider(provider);
+  const run = runInfo(question, provider, !!parsed.flipQuestion), records: PredictionRecord[] = [];
+  for (const [n, row] of rows.entries()) {
+    const identity = { v: 1 as const, n, id: row.id, stateSha256: sha256(row.state),
+      rowSha256ByOption: Object.fromEntries(question.options.map(opt => [opt.id, sha256([row.state, opt.id])])), tags: row.tags ?? [], run };
+    const decided = await decideRow(question, row.state, row.pii, provider, parsed);
+    records.push(decided ? { ...identity, ...decided } : { ...identity, skipped: true });
+  }
+  return records;
+}
+
+export interface LabelRow { id: string; label: string }
+export function parseLabelRow(raw: unknown, where: string): LabelRow {
+  const r = fields(raw, ["id", "label"], where);
+  if (r.id === undefined) throw new UsageError(`${where}: id is required`);
+  checkRowId(r.id, where);
+  if (!optionId(r.label)) throw new UsageError(`${where}: label must be an option id`);
+  return { id: r.id as string, label: r.label };
+}
+function jsonl<T>(text: string, what: string, parse: (raw: unknown, where: string) => T): T[] {
+  const out: T[] = [];
+  text.split("\n").forEach((line, i) => {
+    if (!line.trim()) return;
+    let raw: unknown;
+    try { raw = JSON.parse(line); } catch { throw new UsageError(`${what} line ${i + 1}: not valid JSON`); }
+    out.push(parse(raw, `${what} line ${i + 1}`));
+  });
+  return out;
+}
+export const parseLabelRows = (text: string): LabelRow[] => jsonl(text, "labels", parseLabelRow);
+export const parsePredictionRecords = (text: string): unknown[] => jsonl(text, "predictions", raw => raw);
+
+const SHA = /^[a-f0-9]{64}$/;
+function parseRun(raw: unknown, where: string): RunInfo {
+  const r = fields(raw, ["questionId", "provider", "model", "version", "flip"], `${where} run`);
+  if (typeof r.questionId !== "string" || typeof r.provider !== "string" || typeof r.model !== "string" || (r.version !== undefined && typeof r.version !== "string") || typeof r.flip !== "boolean")
+    throw new UsageError(`${where}: run needs questionId, provider, model, optional version and flip`);
+  return { questionId: r.questionId, provider: r.provider, model: r.model, ...(r.version === undefined ? {} : { version: r.version as string }), flip: r.flip };
+}
+
+/** Join prediction records to labels by id and report exactly as eval does; rows are in the eval row format. */
+export async function score(predictions: PredictionRecord[], labels: LabelRow[]): Promise<EvalReport> {
+  if (!Array.isArray(predictions) || !Array.isArray(labels)) throw new UsageError("score: give arrays of prediction records and labels");
+  if (!predictions.length) throw new UsageError("score: no prediction records");
+  const byId = new Map<string, string>();
+  labels.forEach((raw, i) => {
+    const l = parseLabelRow(raw, `labels[${i}]`);
+    if (byId.has(l.id)) throw new UsageError(`score: labels[${i}]: duplicate id`);
+    byId.set(l.id, l.label);
+  });
+  let run: RunInfo | undefined, optionIds: string[] | undefined;
+  const used = new Set<string>(), results: EvalRowResult[] = [];
+  predictions.forEach((raw, n) => {
+    const where = `prediction record ${n}`;
+    const { stateSha256, rowSha256ByOption, run: rawRun, ...rest } = fields(raw, [...RESULT_FIELDS.filter(k => k !== "label" && k !== "rowSha256"), "stateSha256", "rowSha256ByOption", "run"], where);
+    if (rest.id === undefined) throw new UsageError(`${where}: id is required`);
+    checkRowId(rest.id, where);
+    if (typeof stateSha256 !== "string" || !SHA.test(stateSha256)) throw new UsageError(`${where}: stateSha256 must be a sha256`);
+    const hashes = fields(rowSha256ByOption, Object.keys(rowSha256ByOption && typeof rowSha256ByOption === "object" ? rowSha256ByOption : {}), `${where} rowSha256ByOption`);
+    const ids = Object.keys(hashes);
+    if (ids.length < 2 || ids.length > 26 || ids.some(k => !optionId(k) || typeof hashes[k] !== "string" || !SHA.test(hashes[k] as string))) throw new UsageError(`${where}: rowSha256ByOption needs a sha256 per option id`);
+    const thisRun = parseRun(rawRun, where);
+    if (run === undefined) { run = thisRun; optionIds = ids; }
+    else if (JSON.stringify(run) !== JSON.stringify(thisRun) || JSON.stringify(optionIds) !== JSON.stringify(ids)) throw new UsageError(`${where}: run or option set differs from record 0`);
+    const id = rest.id as string, label = byId.get(id);
+    if (label === undefined) throw new UsageError(`score: ${where}: no label for this id`);
+    if (used.has(id)) throw new UsageError(`score: ${where}: duplicate id`);
+    used.add(id);
+    if (!ids.includes(label)) throw new UsageError(`score: label for ${where} is not one of its option ids`);
+    const { v, n: rn, id: _id, tags, ...decision } = rest;
+    const row = parseRowResult({ v, n: rn, id, rowSha256: hashes[label], label, tags, ...decision }, n);
+    if (!row.skipped && Object.keys(row.probabilities).length && JSON.stringify(Object.keys(row.probabilities)) !== JSON.stringify(ids)) throw new UsageError(`${where}: probabilities must cover exactly the option ids`);
+    if (thisRun.flip !== (!row.skipped && row.flipChoice !== undefined) && !row.skipped) throw new UsageError(`${where}: flipChoice must be present exactly when run.flip is true`);
+    results.push(row);
+  });
+  if (used.size !== byId.size) throw new UsageError(`score: ${byId.size - used.size} label id(s) have no prediction record`);
+  return report(optionIds!, run!, results, true);
 }
 
 const RESULT_FIELDS = ["v", "n", "id", "rowSha256", "label", "tags", "skipped", "choice", "abstain", "reason", "margin", "top", "probabilities", "latencyMs", "flipChoice"];

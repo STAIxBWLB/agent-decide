@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Predict and score (#9 AC1, AC2): `predict` replays an unlabelled set into label-free per-row records (`stateSha256`, `rowSha256ByOption`, `run`), `score` joins them to `{ id, label }` rows by id and prints the eval report, with `--rows-out` in the eval row format; public `predict` and `score`. `eval` output is unchanged.
 - Bun (#11): CI, `engines.bun` and the `bin/adec.js` runtime floor now require Bun 1.4.4 (was 1.4.2), which fixes a PTY spawn hang under concurrent load (oven-sh/bun#45300).
 - Eval (#6): exclusive content-free per-row JSONL output, validated row ids and tags with slice metrics, wording-flip agreement, paired comparison with exact McNemar and explicitly seeded deterministic bootstrap, public `compareRows`; configured decider version in decisions, routes, shadow records and eval reports.
 

@@ -10,17 +10,34 @@ import { readJsonBounded, readStdinBounded, readTextBounded } from "./io.ts";
 import { serveMcp } from "./mcp.ts";
 import { loadPolicy } from "./policy.ts";
 import { parseRouteRequest, route } from "./route.ts";
+import { errorText, helpCommand, helpOverview, outputPolicy, text, type OutputPolicy, type Terminal } from "./output.ts";
 import { serve } from "./serve.ts";
 import { labelOutcome, routeReport, shadowDir, shadowReport } from "./shadow.ts";
 
 const QUESTION_BYTES = 64 * 1024, REQUEST_BYTES = 1024 * 1024, STATE_BYTES = 1024 * 1024, SET_BYTES = 64 * 1024 * 1024;
 export const EXIT = { ok: 0, error: 1, usage: 2, abstained: 3 } as const;
 
-export interface Io { out: (s: string) => void; err: (s: string) => void; env: Record<string, string | undefined> }
-const defaultIo: Io = { out: s => console.log(s), err: s => console.error(s), env: process.env };
+/** `terminal` says which streams are TTYs (default: neither, as for pipes); color, markers and width are resolved from it and env. */
+export interface Io { out: (s: string) => void; err: (s: string) => void; env: Record<string, string | undefined>; terminal?: Terminal }
+const defaultIo: Io = { out: s => console.log(s), err: s => console.error(s), env: process.env,
+  terminal: { out: !!process.stdout.isTTY, err: !!process.stderr.isTTY, ...(process.stdout.columns ? { columns: process.stdout.columns } : {}) } };
 
-function help(): string {
-  return ["usage: adec <command>", "", ...COMMANDS.map(c => `  adec ${c.usage}\n      ${c.summary}`), "", "Configuration: $ADEC_HOME/config.json (default ~/.adec)."].join("\n");
+const HELP_FOOTER = "Run 'adec help <command>' for its options. Configuration: $ADEC_HOME/config.json (default ~/.adec).";
+
+/** Remove the global `--color=X` / `--color X` before command parsing; a second one is a usage error. */
+function colorFlag(argv: string[]): { argv: string[]; flag: string | undefined } {
+  const rest: string[] = [];
+  let flag: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    let v: string | undefined;
+    if (a.startsWith("--color=")) v = a.slice("--color=".length);
+    else if (a === "--color") { v = argv[++i]; if (v === undefined) throw new UsageError("--color needs a value: auto, always or never"); }
+    else { rest.push(a); continue; }
+    if (flag !== undefined) throw new UsageError("--color given twice");
+    flag = v;
+  }
+  return { argv: rest, flag };
 }
 
 interface Parsed { spec: CommandSpec; positional: string[]; values: Record<string, string>; flags: Set<string> }
@@ -102,9 +119,10 @@ function evalText(r: EvalReport): string {
   ].join("\n");
 }
 
-async function run(p: Parsed, io: Io): Promise<number> {
+async function run(p: Parsed, io: Io, policy: OutputPolicy): Promise<number> {
   const home = adecHome(io.env), asJson = p.flags.has("--json");
-  const print = (value: unknown, text: string) => io.out(asJson ? JSON.stringify(value, null, 2) : text);
+  // --json is never colored or wrapped; human text goes through the output module.
+  const print = (value: unknown, human: string) => io.out(asJson ? JSON.stringify(value, null, 2) : text(human, policy));
   switch (p.spec.name) {
     case "ask": {
       noPositional(p);
@@ -165,7 +183,7 @@ async function run(p: Parsed, io: Io): Promise<number> {
       await refuseExisting(rowsOut, "predict");
       const records = await predict(question, rows, provider, flipQuestion ? { flipQuestion } : {});
       await writeRows(rowsOut, records, "predict");
-      io.out(`predict: wrote ${records.length} record(s)`);
+      io.out(text(`predict: wrote ${records.length} record(s)`, policy));
       return EXIT.ok;
     }
     case "score": {
@@ -220,7 +238,7 @@ async function run(p: Parsed, io: Io): Promise<number> {
       // Handlers go in before the listening line: a supervisor may signal as soon as it reads it.
       const stopped = new Promise<void>(resolve => { const stop = () => { process.off("SIGHUP", reload); s.stop(); resolve(); }; process.once("SIGINT", stop); process.once("SIGTERM", stop); });
       process.on("SIGHUP", reload);
-      io.out(`adec serve: listening on ${s.url} (SIGHUP reloads, SIGINT stops)`);
+      io.out(text(`adec serve: listening on ${s.url} (SIGHUP reloads, SIGINT stops)`, policy));
       await stopped;
       return EXIT.ok;
     }
@@ -264,11 +282,25 @@ async function run(p: Parsed, io: Io): Promise<number> {
 }
 
 export async function main(argv: string[], io: Io = defaultIo): Promise<number> {
-  if (!argv.length || argv[0] === "help" || argv[0] === "--help" || argv[0] === "-h") { io.out(help()); return argv.length ? EXIT.ok : EXIT.usage; }
-  try { return await run(parseArgs(argv), io); }
-  catch (e) {
-    if (e instanceof UsageError) { io.err(`adec: ${e.message}`); return EXIT.usage; }
-    io.err(`adec: unexpected error (${e instanceof Error ? e.name : "unknown"}); rerun with the same arguments and report the command if it repeats`);
+  const terminal = io.terminal ?? { out: false, err: false };
+  // Until --color is known, errors use the environment's decision (auto).
+  let policy = outputPolicy(undefined, io.env, terminal) as OutputPolicy;
+  try {
+    const color = colorFlag(argv);
+    const resolved = outputPolicy(color.flag, io.env, terminal);
+    if (resolved instanceof Error) throw new UsageError("--color: give auto, always or never");
+    policy = resolved;
+    argv = color.argv;
+    if (!argv.length || argv[0] === "help" || argv[0] === "--help" || argv[0] === "-h") {
+      const topic = argv.slice(1).join(" "), spec = COMMANDS.find(c => c.name === topic);
+      if (topic && !spec) throw new UsageError(`help: unknown command ${JSON.stringify(topic)}; run adec help`);
+      io.out(spec ? helpCommand(spec, policy) : helpOverview(COMMANDS, HELP_FOOTER, policy));
+      return argv.length ? EXIT.ok : EXIT.usage;
+    }
+    return await run(parseArgs(argv), io, policy);
+  } catch (e) {
+    if (e instanceof UsageError) { io.err(errorText(e.message, policy)); return EXIT.usage; }
+    io.err(errorText(`unexpected error (${e instanceof Error ? e.name : "unknown"}); rerun with the same arguments and report the command if it repeats`, policy));
     return EXIT.error;
   }
 }

@@ -30,5 +30,8 @@
   ],
   "scripts": {
     "check": "bun x tsc --noEmit && bun scripts/check-boundary.ts && bun test && bun pm pack --dry-run"
+  },
+  "dependencies": {
+    "@staix/cli-output": "0.1.3"
   }
 }

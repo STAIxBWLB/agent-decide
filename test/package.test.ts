@@ -4,5 +4,6 @@ import pkg from "../package.json";
 
 test("package name matches the export", () => {
   expect(PACKAGE).toBe(pkg.name);
-  expect(Object.keys((pkg as { dependencies?: object }).dependencies ?? {})).toHaveLength(0);
+  // Runtime dependencies: exact-pinned first-party @staix/* packages only (AGENTS.md, scripts/check-boundary.ts).
+  expect((pkg as { dependencies?: Record<string, string> }).dependencies ?? {}).toEqual({ "@staix/cli-output": "0.1.3" });
 });

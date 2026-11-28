@@ -102,3 +102,67 @@ test("a truncated UTF-8 sequence at EOF is a JSON-RPC parse error, not a crash",
   expect(await proc.exited).toBe(0);
   expect(JSON.parse(out.trim()).error.code).toBe(-32700);
 });
+
+/** Minimal JSON Schema check for the forms TOOLS uses: closed objects, arrays, scalars. Returns the first refusal path. */
+function refusal(schema: any, value: unknown, path = "$"): string | null {
+  const t = schema.type;
+  if (t === "string" || t === "boolean" || t === "number") return typeof value === t ? null : path;
+  if (t === "integer") return Number.isInteger(value) ? null : path;
+  if (t === "array") {
+    if (!Array.isArray(value)) return path;
+    for (const [i, v] of value.entries()) { const r = refusal(schema.items, v, `${path}[${i}]`); if (r) return r; }
+    return null;
+  }
+  if (t !== "object" || !value || typeof value !== "object" || Array.isArray(value)) return path;
+  expect(schema.additionalProperties).toBe(false);
+  for (const k of schema.required ?? []) if (!(k in value)) return `${path}.${k}`;
+  for (const [k, v] of Object.entries(value)) {
+    if (!(k in schema.properties)) return `${path}.${k}`;
+    const r = refusal(schema.properties[k], v, `${path}.${k}`); if (r) return r;
+  }
+  return null;
+}
+
+test("#18: advertised schemas name every nested field; valid calls pass them and reach the handler; unknown nested fields are refused", async () => {
+  const ok = fakeServer(body => "p1" in body.questions.decision.criteria ? systemOneAnswer({ p1: 0.9, p2: 0.1 }) : systemOneAnswer({ implement: 0.7, review: 0.2, plan: 0.1 }));
+  const home = tempDir();
+  const keyFile = join(home, "key.txt");
+  writeFileSync(keyFile, KEY);
+  writeFileSync(join(home, "config.json"), JSON.stringify({ providers: { fake: { kind: "systemone", endpoint: ok.url, model: "fake-1.0", keyFile, onPrem: true } } }));
+  mkdirSync(join(home, "policies"));
+  writeFileSync(join(home, "policies", "chat.json"), JSON.stringify({ policyId: "chat", provider: "fake", instructions: "pick.",
+    candidates: [{ alias: "fast", efforts: ["low"], onPrem: true }, { alias: "big", efforts: ["high"], onPrem: true }], default: { alias: "big", effort: "high" } }));
+  const ask = { question: { ...question, options: question.options.map((o: any, i: number) => i ? o : { ...o, description: "first" }) }, state: "s", pii: false, minMargin: 0.1, provider: "fake" };
+  const request = { policyId: "chat", turnId: "t-1", evidence: "e", candidates: ["fast", "big"],
+    constraints: { contextTokens: 1, pii: false, private: false, current: { alias: "big", effort: "high" } } };
+  const bad = [
+    ["adec_ask", { ...ask, question: { ...ask.question, extra: 1 } }],
+    ["adec_ask", { ...ask, question: { ...ask.question, options: [...ask.question.options.slice(1), { id: "zz", extra: 1 }] } }],
+    ["adec_route", { request: { ...request, extra: 1 } }],
+    ["adec_route", { request: { ...request, constraints: { ...request.constraints, extra: 1 } } }],
+    ["adec_route", { request: { ...request, constraints: { ...request.constraints, current: { alias: "big", effort: "high", extra: 1 } } } }],
+  ] as const;
+  try {
+    const call = (id: number, name: string, args: unknown) => ({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+    const r = await session(home, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      call(3, "adec_ask", ask),
+      call(4, "adec_route", { request }),
+      ...bad.map(([name, a], i) => call(10 + i, name, a)),
+    ]);
+    const by = new Map(r.map(m => [m.id, m]));
+    const schema = (name: string) => by.get(2).result.tools.find((t: any) => t.name === name).inputSchema;
+    expect(refusal(schema("adec_ask"), ask)).toBeNull();
+    expect(refusal(schema("adec_route"), { request })).toBeNull();
+    expect(by.get(3).result.isError).toBeUndefined();
+    expect(JSON.parse(by.get(3).result.content[0].text)).toMatchObject({ choice: "implement" });
+    expect(by.get(4).result.isError).toBeUndefined();
+    expect(JSON.parse(by.get(4).result.content[0].text)).toHaveProperty("alias");
+    for (const [i, [name, a]] of bad.entries()) {
+      expect(refusal(schema(name), a)).toEndWith("extra");
+      expect(by.get(10 + i).result.isError).toBe(true);
+    }
+  } finally { ok.stop(); }
+});
